@@ -1,39 +1,66 @@
 ﻿using BotPollo.Core;
+using BotPollo.Logging;
 using Discord.WebSocket;
 using System;
 using System.Threading.Tasks;
+using MongoWrapper.MongoCore;
+using System.Configuration;
+using System.IO;
 
 namespace BotPollo
 {
     class Program
     {
-        static void Main(string[] args) => new Program().MainAsync().GetAwaiter().GetResult();
+        static void Main(string[] args) => new Program().MainAsync(args).GetAwaiter().GetResult(); //Creating never-ending command-waiting process
 
-        private static DiscordSocketClient dclient;
-        private static string token;
+        public static DiscordSocketClient DiscordClient { get; private set; }
+        public static string Token { get; private set; }
+        public static DiscordSocketClient GetBot() { return DiscordClient; }
+        public static MongoNode Node { get; private set; }
         private delegate Task ConsoleCommandAsyncCallback(string content, params string[] args);
-        private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
-
-        public static DiscordSocketClient GetProgram() { return dclient; }
-
-        public async Task MainAsync()
+        public async Task MainAsync(string[] args)
         {
-            var client = new DiscordSocketClient();
+            try
+            {
+                if (args.Length > 0)
+                {
+                    Logger.Console_Log($"Launch args: {args[0]} ", LogLevel.Info);
+                }
+                //MongoDB
 
-            client.Log += Client_Log;
-            client.MessageReceived += Attributes.Setup.Command_Handler;
+                string dbName = "cinematime";
+                Node = new MongoNode("mongodb://localhost", dbName);
+                Node.Log += (string message) => { Logger.Console_Log(message, LogLevel.Database); };
+                Node.Connect();
 
-            Attributes.Setup.RegisterCommands(new Commands());
+                //Discord
+                var client = new DiscordSocketClient();
 
-            token = "ODg1MTc0NTc0NTkxOTMwNDQ4.YTjNEA.UVRrGfAn961ZmDLo506qpBg2jEA"; //It's already expired of course
+                client.Log += Logging.Logger.Client_LogAsync;
+                client.MessageReceived += Attributes.Setup.Command_HandlerAsync;
 
-            await client.LoginAsync(Discord.TokenType.Bot,token);
-            await client.StartAsync();
+                Attributes.Setup.RegisterCommands(new Commands());
 
-            dclient = client;
-            WaitForCommandAsync(DispatchCommand);
+                Token = File.ReadAllText("token.txt"); //It's already expired of course
+                await client.LoginAsync(Discord.TokenType.Bot, Token);
+                await client.StartAsync();
+                DiscordClient = client;
 
-            await Task.Delay(-1);
+                //Disconnecting bot from voice channels to prevent errors with DiscordPlayer
+
+                if (args.Length > 0 && args[0].Equals("-i"))
+                {
+                    Logger.Console_Log("Inputs from console are now disabled", LogLevel.Warning);
+                    await Task.Delay(-1);
+                }
+                else
+                {
+                    await WaitForCommandAsync(DispatchCommandAsync); //This will be awaited forever
+                }
+            }catch(Discord.Net.HttpException)
+            {
+                Logger.Console_Log("Invalid token, please check the token file",Logging.LogLevel.Fatal);
+            }
         }
 
         private async Task WaitForCommandAsync(ConsoleCommandAsyncCallback callback)
@@ -41,8 +68,9 @@ namespace BotPollo
             while (true)
             {
                 var cmdLine = Console.ReadLine();
+                cmdLine = cmdLine.Trim(); //from ' cmd arg1 arg2' to 'cmd arg1 arg2' without spaces
                 string cmdName = "";
-                string[] cmdArgs = new string[1];
+                string[] cmdArgs = new string[0];
                 if (cmdLine.Contains(' '))
                 {
                     var cmdIndex = cmdLine.IndexOf(" ");
@@ -53,62 +81,55 @@ namespace BotPollo
                 {
                     cmdName = cmdLine;
                 }
-                callback(cmdName, cmdArgs);
+                await callback(cmdName, cmdArgs); //this prevents parallel command execution
             }
         }
 
-        private async Task DispatchCommand(string name, params string[] args)
+        private async Task DispatchCommandAsync(string name, params string[] args)
         {
             if(name == "stop")
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Info     Shutting down bot...");
+                Logger.Console_Log("Shutting down bot...",LogLevel.Info);
                 Console.ForegroundColor = ConsoleColor.White;
-                await dclient.StopAsync();
+                await DiscordClient.StopAsync();
                 Environment.Exit(0);
 
             }
 
-            if(name == "disconnect" && dclient.ConnectionState != Discord.ConnectionState.Disconnected)
+            if(name == "disconnect" && DiscordClient.ConnectionState != Discord.ConnectionState.Disconnected)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Info     Disconnecting bot...");
+                Logger.Console_Log("Disconnecting bot...",LogLevel.Warning);
                 Console.ForegroundColor = ConsoleColor.White;
-                await dclient.StopAsync();
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Info     Bot is now OFFLINE, type connect to turn it back ONLINE");
+                await DiscordClient.StopAsync();
+                Logger.Console_Log("Bot is now OFFLINE, type connect to turn it back ONLINE", LogLevel.Warning);
             }
             else if (name == "disconnect")
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Error     Bot is already OFFLINE!");
+                Logger.Console_Log("Bot is already OFFLINE", LogLevel.Error);
                 Console.ForegroundColor = ConsoleColor.White;
             }
 
-            if(name == "reconnect" && dclient.ConnectionState != Discord.ConnectionState.Connected)
+            if(name == "reconnect" && DiscordClient.ConnectionState != Discord.ConnectionState.Connected)
             {
                 Console.ForegroundColor = ConsoleColor.Blue;
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Info     Reconnecting bot...");
+                Logger.Console_Log("Reconnecting bot...", LogLevel.Info);
                 Console.ForegroundColor = ConsoleColor.White;
-                await dclient.LoginAsync(Discord.TokenType.Bot,token);
-                await dclient.StartAsync();
+                await DiscordClient.LoginAsync(Discord.TokenType.Bot,Token);
+                await DiscordClient.StartAsync();
 
             }
             else if(name == "reconnect")
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[Logging][Internal] " + DateTime.Now.ToString("HH:mm:ss") + " Error     Bot is already ONLINE!");
+                Logger.Console_Log("Bot is already ONLINE", LogLevel.Error);
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }
         
-        private Task Client_Log(Discord.LogMessage arg)
-        {
-            Console.ForegroundColor = ConsoleColor.Blue;
-            Console.Write("[Logging][Discord] ");
-            Console.Write(arg + "\n");
-            Console.ForegroundColor = ConsoleColor.White;
-            return Task.CompletedTask;
-        }
+
 
 
     }
