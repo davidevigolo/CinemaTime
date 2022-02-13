@@ -1,22 +1,13 @@
-﻿using Discord.WebSocket;
+﻿using BotPollo.Logging;
+using Discord.WebSocket;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace BotPollo.Attributes
 {
-    class Command : Attribute
-    {
-        public Command(string Name)
-        {
-            this.Name = Name;
-        }
-        public string Name { get; set; }
-    }
-
     class Setup
     {
         private static Dictionary<string, MethodInfo> CommandMap = new Dictionary<string, MethodInfo>();
@@ -27,7 +18,7 @@ namespace BotPollo.Attributes
             foreach (MethodInfo mi in types)
             {
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("[Logging][Internal]" + DateTime.Now.ToString(" HH:mm:ss") + " Info     Command: " + ((Command)mi.GetCustomAttribute(typeof(Command))).Name + " binded to method: " + mi.Name);
+                Logger.Console_Log("Command: " + ((Command)mi.GetCustomAttribute(typeof(Command))).Name + " binded to method: " + mi.Name,LogLevel.Trace);
                 CommandMap.Add(((Command)mi.GetCustomAttribute(typeof(Command))).Name.ToLower(), mi);
             }
         }
@@ -39,7 +30,7 @@ namespace BotPollo.Attributes
                 var method = CommandMap.GetValueOrDefault(msg.Content.ToLower());
                 method.Invoke(null, new object[] { msg });
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine("[Logging][Internal]" + DateTime.Now.ToString(" HH:mm:ss") + " Info     User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower());
+                Logger.Console_Log("User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(),LogLevel.Info);
                 Console.ForegroundColor = ConsoleColor.White;
             }
 

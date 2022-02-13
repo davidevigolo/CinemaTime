@@ -33,6 +33,31 @@ namespace BotPollo.Core
             await channel.SendMessageAsync("", false, builder.Build());
         }
 
-
+        [Command("creasondaggio")]
+        public static async Task CreatePoll(SocketMessage msg)
+        {
+            var firstMessage = msg;
+            Dialogue dial = new Dialogue(msg.Author, msg.Channel, 5000);
+            dial.Timeout += async () => {
+                await dial.ReplyAsync("Comando annullato",true,true);
+                await Task.Delay(1300);
+                await firstMessage.DeleteAsync();
+                await dial.ClearMessageCacheAsync();
+                dial.Close(); };
+            await dial.ReplyAsync("Inserisci il titolo",false,false);
+            var result = await dial.GetUserReplyAsync(false,false,true);
+            if (result != null)
+            {
+                await dial.ReplyAsync("Inserisci la descrizione",true,true);
+                var resp = await dial.GetUserReplyAsync(false, false, true);
+                if (resp != null)
+                {
+                    await dial.ReplyAsync("Attendi...", true, true);
+                    await dial.ReplyAsync($"Titolo: {result} Descrizione: {resp}", false, false, true);
+                    dial.Close();
+                    await firstMessage.DeleteAsync();
+                }
+            }
+        }
     }
 }
