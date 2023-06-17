@@ -1,4 +1,5 @@
 ﻿using BotPollo.Attributes;
+using BotPollo.Core.Exceptions;
 using Discord;
 using Discord.WebSocket;
 using System;
@@ -6,15 +7,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace BotPollo.Core
 {
-    class Commands
+    public class Commands
     {
-        static List<string> Songs = new List<string>();
-        static DiscordPlayer player;
+        public static Dictionary<ulong, DiscordPlayer> serverPlayersMap = new Dictionary<ulong, DiscordPlayer>();
 
         [Command("ping")]
         public static async Task CheckPunti(SocketMessage msg)
@@ -67,7 +68,7 @@ namespace BotPollo.Core
                     {
                         Name = msg.Author.Username,
                         IconUrl = msg.Author.GetAvatarUrl()
-                    }).WithColor(Color.Blue)
+                    }).WithColor(Discord.Color.Blue)
                     .WithFooter("CinemaTime™")
                     .WithTimestamp(DateTime.Now)
                     .WithThumbnailUrl("https://thumbs.dreamstime.com/b/poll-vector-line-icon-outline-concept-linear-sign-symbol-147159048.jpg");
@@ -94,10 +95,59 @@ namespace BotPollo.Core
             }
         }
 
-        [Command("canzonedelpollo")]
-        public static async Task CanzonePollo(SocketMessage msg)
+       /* [Command("p")]
+        public static async Task YoutubeSongAsync(SocketMessage msg)
         {
-            if(Songs.Count == 0)
+            string content = msg.Content;
+            string q = msg.Content.Substring(content.IndexOf('p') + 1);
+            IVoiceChannel voiceChannel = (msg.Author as IGuildUser).VoiceChannel;
+            var audioClient = await voiceChannel.ConnectAsync();
+            player = new DiscordPlayer(audioClient, msg.Channel as IMessageChannel,voiceChannel);
+            await player.AddYoutubeSongAsync(q);
+        }*/
+
+        [Command("skip")]
+        public static async Task Skip(SocketSlashCommand ssc)
+        {
+            try
+            {
+                if (await AssertUserInSameVChannel(ssc))
+                {
+                    DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
+                    player.Skip();
+                    await ssc.RespondAsync("Song skipped!");
+                    await Task.Run(() =>
+                    {
+                        Task.Delay(4000);
+                        ssc.DeleteOriginalResponseAsync();
+                    });
+                }
+            }catch(DiscordPlayerNotConnectedException)
+            {
+                await ssc.RespondAsync("The bot isn't connected on this server at the moment");
+            }
+        }
+
+        [Command("time")]
+        public static async Task Time(SocketSlashCommand ssc)
+        {
+            DiscordPlayer player = serverPlayersMap[(ulong)ssc.GuildId];
+            if (!player.isPlaying)
+            {
+                await ssc.RespondAsync("The bot isn't playing any song at the moment or it is not connected at all");
+                return;
+            }
+
+            string pollo = player.GetTime().ToString();
+            await ssc.RespondAsync(pollo);
+
+        }
+
+        [Command("p","play","pla","pl")]
+        [Option("query",ApplicationCommandOptionType.String,true)]
+        public static async Task CanzonePollo(SocketSlashCommand ssc)
+        {
+            /*if(Songs.Count == 0)
             {
                 string[] files = Directory.GetFiles(@"C:\Users\Administrator\Music\");
                 if (Songs.Count == 0 || files.Length > Songs.Count)
@@ -110,10 +160,11 @@ namespace BotPollo.Core
 
                 }
             }
-            int songIndex;
-            if (msg.Content.Split(' ').Length == 1)
+            int songIndex;*/
+            string q = "";
+            if (ssc.Data.Options.First().Value == " ")
             {
-                Dialogue dial = new Dialogue(msg.Author, msg.Channel, 30000);
+                /*Dialogue dial = new Dialogue(msg.Author, msg.Channel, 30000);
 
                 string message = "";
                 for (int i = 0; i < Songs.Count; i++)
@@ -141,59 +192,178 @@ namespace BotPollo.Core
                 await msg.Channel.SendMessageAsync($"`{message}`");
                 var response = await dial.GetUserReplyAsync(false, false, false);
                 songIndex = Int32.Parse(response.Content);
-                dial.Close();
+                dial.Close();*/
+                EmbedBuilder embed = new EmbedBuilder
+                {
+                    Title = "Usage",
+                    Description = "pollo <song name>"
+                }.WithAuthor(new EmbedAuthorBuilder
+                {
+                    Name = Program.GetBot().CurrentUser.Username,
+                    IconUrl = Program.GetBot().CurrentUser.GetAvatarUrl()
+                });
+                await ssc.Channel.SendMessageAsync(embed: embed.Build());
+                return;
             }
             else
             {
-                songIndex = Int32.Parse(msg.Content.Split(' ')[1]); //Gets the first argument of the command
+                q = ssc.Data.Options.First().Value.ToString();
             }
-            if((msg.Author as IGuildUser).VoiceChannel != null && (msg.Channel as IGuildChannel).GuildId == (msg.Author as IGuildUser).VoiceChannel.GuildId)
+            if ((ssc.User as IGuildUser).VoiceChannel != null && (ssc.Channel as IGuildChannel).GuildId == (ssc.User as IGuildUser).VoiceChannel.GuildId)
             {
-                IVoiceChannel voiceChannel = (msg.Author as IGuildUser).VoiceChannel;
-                try
+                IVoiceChannel voiceChannel = (ssc.User as IGuildUser).VoiceChannel;
+
+                if (!serverPlayersMap.ContainsKey(voiceChannel.GuildId))
                 {
-                    if (Program.GetBot().GetGuild((msg.Channel as SocketGuildChannel).Guild.Id).CurrentUser.VoiceState == null || player == null)
+                    try
                     {
                         var audioClient = await voiceChannel.ConnectAsync();
-                        player = new DiscordPlayer(audioClient,msg.Channel as IMessageChannel);
+                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel);
+                        serverPlayersMap.Add(voiceChannel.GuildId, player);
                         player.NewSongPlaying += Player_NewSongPlaying; //SISTEMA EVENTI CHE NON TRIGGERANO
                         player.SongAdded += Player_SongAdded;
                     }
-                    await player.AddSongAsync(@"C:\Users\Administrator\Music\" + Songs[songIndex]);
+                    catch (Exception ex)
+                    {
+                        Logging.Logger.Console_Log(ex.Message, Logging.LogLevel.Error);
+                    }
                 }
-                catch(Exception ex)
+                try
                 {
-                    Logging.Logger.Console_Log(ex.StackTrace, Logging.LogLevel.Error);
-                    Logging.Logger.Console_Log(ex.Message, Logging.LogLevel.Error);
+                    if (await AssertUserInSameVChannel(ssc))
+                    {
+                        DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
+                        var res = await player.AddYoutubeSongAsync(q);
+                        if (!res)
+                        {
+
+                            await ssc.RespondAsync($":red_square: Song not found!");
+                            return;
+                        }
+
+                        await ssc.RespondAsync();
+                        return;
+                    }
+                    await ssc.RespondAsync(":red_square: You're not in the same voice channel of the bot");
+                }
+                catch(DiscordPlayerNotConnectedException ex)
+                {
+                    await ssc.RespondAsync(":red_square: The bot isn't connected on this server at the moment");
                 }
             }
             else
             {
-                await msg.Channel.SendMessageAsync("You're not in a valid voice channel");
+                await ssc.RespondAsync(":red_square: You're not in a valid voice channel");
             }
         }
 
-        private static void Player_SongAdded(string name, IMessageChannel commandChannel)
+        [Command("seek")]
+        [Option("timestamp",ApplicationCommandOptionType.String,true)]
+        public static async Task SeekSongAsync(SocketSlashCommand ssc)
         {
-            commandChannel.SendMessageAsync(embed: embedString("Added to queue",name));
+            string arg = ssc.Data.Options.First().Value.ToString();
+            if(arg.Count(x => x == ':') < 2)
+            {
+                arg = $"00:{arg}";
+            }
+            TimeSpan inSec = TimeSpan.Parse(arg);
+            try
+            {
+                if (await AssertUserInSameVChannel(ssc))
+                {
+                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    await player.SeekAsync(inSec);
+                    await ssc.RespondAsync("Track resuming at: " + inSec.ToString());
+                    await Task.Run(() =>
+                    {
+                        Task.Delay(4000);
+                        ssc.DeleteOriginalResponseAsync();
+                    });
+                    return;
+                }
+                await ssc.RespondAsync("You're not in the same voice channel of the bot");
+            }
+            catch (DiscordPlayerNotConnectedException ex)
+            {
+                await ssc.RespondAsync("The bot isn't connected on this server at the moment");
+            }
         }
 
-        private static void Player_NewSongPlaying(string name, IMessageChannel commandChannel)
+        [Command("speed","s")]
+        [Option("factor",ApplicationCommandOptionType.Number,true)]
+        public static async Task SetSpeedAsync(SocketSlashCommand ssc)
         {
-            commandChannel.SendMessageAsync(embed: embedString("Now playing",name));
+            string arg = ssc.Data.Options.First().Value.ToString();
+            double speed = Convert.ToDouble(arg);
+            try
+            {
+                if (await AssertUserInSameVChannel(ssc))
+                {
+                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    await player.SetSpeedAsync(speed);
+                    return;
+                }
+                await ssc.RespondAsync("You're not in the same voice channel of the bot");
+            }
+            catch (DiscordPlayerNotConnectedException ex)
+            {
+                await ssc.RespondAsync("The bot isn't connected on this server at the moment");
+            }
+        }
+        private static void Player_SongAdded(string name, IMessageChannel commandChannel,DiscordPlayer dp)
+        {
+            commandChannel.SendMessageAsync(embed: embedString("Added to queue",name,dp.currentStreamInfo.Bitrate.KiloBitsPerSecond,dp.currentVideoInfo.Author.ChannelTitle, (TimeSpan)dp.currentVideoInfo.Duration));
         }
 
-        private static Embed embedString(string action,string song)
+        private static void Player_NewSongPlaying(string name, IMessageChannel commandChannel, DiscordPlayer dp)
+        {
+            commandChannel.SendMessageAsync(embed: embedString("Now playing",name, dp.currentStreamInfo.Bitrate.KiloBitsPerSecond, dp.currentVideoInfo.Author.ChannelTitle, (TimeSpan)dp.currentVideoInfo.Duration));
+        }
+
+        private static Embed embedString(string action,string song,double bitrate, string author, TimeSpan duration)
         {
             var botClient = Program.GetBot();
             EmbedBuilder embed = new EmbedBuilder
             {
                 Title = action,
-                Description = $"`{song}`"
+                Description = $"{song}"
             }
-            .WithColor(Color.Blue)
+            .WithColor(Discord.Color.Blue)
             .WithTimestamp(DateTime.Now);
+            embed.Fields.Add(new EmbedFieldBuilder().WithName("Bitrate").WithValue(Math.Truncate(bitrate * 100) / 100 + "kb/s").WithIsInline(true));
+            embed.Fields.Add(new EmbedFieldBuilder().WithName("Author").WithValue(author).WithIsInline(true));
+            embed.Fields.Add(new EmbedFieldBuilder().WithName("Video duration").WithValue(duration.ToString()).WithIsInline(true));
             return embed.Build();
         }
+
+        private static async Task<bool> AssertUserInSameVChannel(SocketMessage msg)
+        {
+            IGuildUser sender = (IGuildUser)msg.Author;
+            IGuildChannel channel = (IGuildChannel)msg.Channel;
+            if (serverPlayersMap.ContainsKey(channel.GuildId))
+            {
+                var usersInVoiceChannel = await serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
+                if (usersInVoiceChannel == null)
+                    return false;
+                return true;
+            }
+            throw new DiscordPlayerNotConnectedException();
+        }
+
+        private static async Task<bool> AssertUserInSameVChannel(SocketSlashCommand ssc)
+        {
+            IGuildUser sender = (IGuildUser)ssc.User;
+            IGuildChannel channel = (IGuildChannel)ssc.Channel;
+            if (serverPlayersMap.ContainsKey(channel.GuildId))
+            {
+                var usersInVoiceChannel = await serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
+                if (usersInVoiceChannel == null)
+                    return false;
+                return true;
+            }
+            throw new DiscordPlayerNotConnectedException();
+        }
+
+        public static async Task<DiscordPlayer> GetServerDiscordPlayer(ulong guildId) => serverPlayersMap.GetValueOrDefault(guildId);
     }
 }

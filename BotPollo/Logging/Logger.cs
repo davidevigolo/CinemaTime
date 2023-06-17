@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -14,7 +15,9 @@ namespace BotPollo.Logging
         Fatal,
         Trace,
         All,
-        Database
+        AudioManager,
+        Database,
+        WebAPI
     }
     class Logger
     {
@@ -52,8 +55,14 @@ namespace BotPollo.Logging
                 case LogLevel.Database:
                     Console.ForegroundColor = ConsoleColor.Magenta;
                     break;
+                case LogLevel.AudioManager:
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    break;
+                case LogLevel.WebAPI:
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    break;
             }
-            Console.Write($"[Logging][{level}] {DateTime.Now.ToString("hh:mm:ss")} ");
+            Console.Write($"[Logging][{level}] {DateTime.Now.ToLocalTime().ToString("hh:mm:ss")} ");
             Console.Write(arg + "\n");
             Console.ForegroundColor = ConsoleColor.White;
         }
