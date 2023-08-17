@@ -1,23 +1,13 @@
-﻿using ABI.System;
-using BotPollo.Logging;
-using Discord;
-using Discord.Audio;
-using FFMpegCore.Enums;
-using FFMpegCore.Pipes;
-using System;
-using System.Collections;
+﻿using BotPollo.Logging;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Windows.Interop;
+using System.Numerics;
 using YoutubeExplode.Videos.Streams;
 using Exception = System.Exception;
 using TimeSpan = System.TimeSpan;
 
 namespace BotPollo.Core
 {
-    public class FFmpegPlayer
+    public class FFmpegPlayer : IDisposable
     {
         public delegate void PlaybackEndedCallback();
         public delegate void PlaybackStartedCallback();
@@ -25,10 +15,13 @@ namespace BotPollo.Core
         public event PlaybackStartedCallback PlaybackStarted;
         protected System.Threading.CancellationTokenSource tokenSource;
         protected System.Threading.CancellationToken skipToken;
-        internal Stream CurrentStream { get; private set; }
+        internal Stream CurrentYoutubeSourceStream { get; private set; }
+        internal Stream CurrentStream { get; private set; } //Original stream fetched from youtube
+        internal Stream CurrentStreamPlaying { get; private set; }  //Current stream represents the current song stream but it's just a copy, that is consumed by ffmpeg.
         internal int StreamBitrate { get; private set; }
         internal Stopwatch songTimer { get; private set; }
-
+        protected Task CurrentOperation { get; set; }
+        protected Task CurrentSetOperation { get; set; } //Used by DiscordPlayer.cs to wait until the first song enqueued of a playlist starts playing, avoiding creating multiple message being created
         protected FFmpegPlayer()
         {
             tokenSource = new System.Threading.CancellationTokenSource();
@@ -68,11 +61,13 @@ namespace BotPollo.Core
         protected async Task SetYoutubeStreamAsync(Stream youtubeInputStream, Stream destinationStream, AudioOnlyStreamInfo streamInfo, int channelBitrate)
         {
             Process proc = new Process();
+            MemoryStream ms = new MemoryStream();
+            MemoryStream ms2 = new MemoryStream();
 
             int bitrateParam = channelBitrate > 256000 ? 256000 : channelBitrate;
             proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
             proc.StartInfo.Arguments = String.Format($" -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000 -b:a {bitrateParam} pipe:1"); //-ab {channelBitrate}
-            //proc.StartInfo.Arguments = String.Format($"-i pipe:0 -c:a libopus -f opus -thread_queue_size 4096 -b:a {channelBitrate} pipe:1");
+                                                                                                                                         //proc.StartInfo.Arguments = String.Format($"-i pipe:0 -c:a libopus -f opus -thread_queue_size 4096 -b:a {channelBitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
             proc.StartInfo.RedirectStandardInput = true;
             proc.StartInfo.RedirectStandardOutput = true;
@@ -82,73 +77,71 @@ namespace BotPollo.Core
 
             Logging.Logger.Console_Log($"Converting FFMPEG InputStream ({streamInfo.AudioCodec} | {streamInfo.Bitrate} | {streamInfo.Size}) to Discord suitable format ({channelBitrate / 1000} kb/s)", Logging.LogLevel.AudioManager);
             //StreamToStreamAsync(inputStream, proc.StandardInput.BaseStream);
-            MemoryStream ms = new MemoryStream();
-            MemoryStream ms2 = new MemoryStream();
             await youtubeInputStream.CopyToAsync(ms);
-            //CurrentStream = ms;
+            CurrentYoutubeSourceStream = ms;
             StreamBitrate = channelBitrate;
-            CurrentStream = ms;
+
             ms.Position = 0;
             Stream destStrm = proc.StandardInput.BaseStream;
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
             Task.Run(async () =>
             {
-
-                Task.Run(async () =>
-               {
-                   await StreamToStreamAsync(ms, destStrm, skipToken,closeSourceStreamAfter: false);
-               });
-
-                PlaybackStarted();
-                Logging.Logger.Console_Log($"Piping stream to discord audio channel", Logging.LogLevel.AudioManager);
-                var ffmpegOut = proc.StandardOutput.BaseStream;
-                await StreamToStreamAsync(ffmpegOut, ms2, skipToken, false);
-                ms2.Position = 0;
-
-
-                int bufferSize = 1500;
-                byte[] bytes = new byte[bufferSize];
-
-                var currentSkipToken = skipToken; //Altrimenti il metodo skip setta il nuovo cancellation token e il while può non venire a conoscienza che quello vecchio è stato cancellato poichè stava ancora inviando un buffer e quando checka di nuovo la reference è quella di quella nuova
-                while (ms2.Position < ms2.Length)
-                {
-                    try
-                    {
-                        currentSkipToken.ThrowIfCancellationRequested();
-
-                    }catch (Exception ex)
-                    {
-                        Logger.Console_Log("Track has been skipped", LogLevel.Info);
-                        break;
-                    }
-                    int bytesRead = 0;
-                    bytesRead = await ms2.ReadAsync(bytes, 0, bytes.Length);
-                    if (bytesRead == 0) { break; }
-                    await destinationStream.WriteAsync(bytes, 0, bytesRead);
-                    Array.Clear(bytes);
-                }
-                await destinationStream.FlushAsync();
-
-                /*try
-                {
-                    await FFMpegCore.FFMpegArguments.FromPipeInput(new StreamPipeSource(ms)).OutputToPipe(new StreamPipeSink(destinationStream), options =>
-                        options.WithAudioCodec(AudioCodec.Aac).WithAudioBitrate(channelBitrate)
-                    ).ProcessAsynchronously();
-                }catch(Exception ex)
-                {
-                    Console.WriteLine(ex.Message);
-                }*/
-
-                PlaybackEnded();
-                Logging.Logger.Console_Log($"Track terminated", Logging.LogLevel.Info);
-
-
+                await StreamToStreamAsync(ms, destStrm, skipToken, closeSourceStreamAfter: false);
             });
-            
-            return;
-#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+            PlaybackStarted();
+            Logging.Logger.Console_Log($"Piping stream to discord audio channel", Logging.LogLevel.AudioManager);
+            var ffmpegOut = proc.StandardOutput.BaseStream;
+            await StreamToStreamAsync(ffmpegOut, ms2, skipToken, false);
+            ms2.Position = 0;
 
+            MemoryStream currentStream = new MemoryStream();
+            await ms2.CopyToAsync(currentStream);
+            ms2.Position = 0;
+            currentStream.Position = 0;
+            CurrentStream = currentStream;
+
+            CurrentStreamPlaying = ms2;
+
+            int bufferSize = 1500;
+            byte[] bytes = new byte[bufferSize];
+
+            var currentSkipToken = skipToken; //Altrimenti il metodo skip setta il nuovo cancellation token e il while può non venire a conoscienza che quello vecchio è stato cancellato poichè stava ancora inviando un buffer e quando checka di nuovo la reference è quella di quella nuova
+            while (ms2.Position < ms2.Length)
+            {
+                try
+                {
+                    currentSkipToken.ThrowIfCancellationRequested();
+
+                }
+                catch (Exception ex)
+                {
+                    Logger.Console_Log("Track has been skipped or seeked", LogLevel.Info);
+                    PlaybackEnded();
+                    return;
+                }
+                int bytesRead = 0;
+                bytesRead = await ms2.ReadAsync(bytes, 0, bytes.Length);
+                if (bytesRead == 0) { break; }
+                await destinationStream.WriteAsync(bytes, 0, bytesRead);
+                Array.Clear(bytes);
+            }
+            await destinationStream.FlushAsync();
+
+            /*try
+            {
+                await FFMpegCore.FFMpegArguments.FromPipeInput(new StreamPipeSource(ms)).OutputToPipe(new StreamPipeSink(destinationStream), options =>
+                    options.WithAudioCodec(AudioCodec.Aac).WithAudioBitrate(channelBitrate)
+                ).ProcessAsynchronously();
+            }catch(Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }*/
+
+            PlaybackEnded();
+            Logging.Logger.Console_Log($"Track terminated", Logging.LogLevel.Info);
+            return;
         }
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
 
         ///<summary>
         /// Given a parameter <paramref name="originalStream"/> it's piped in ffmpeg and trimmed at the specified offset
@@ -157,7 +150,7 @@ namespace BotPollo.Core
         /// </summary>
         protected async Task SeekStreamAsync(TimeSpan offset, Stream originalStream, Stream destinationStream, int bitrate)
         {
-            CurrentStream = originalStream; //Otherwise we would lose the original stream reference, so any other seek operation would begin from whereItStopped not from the actual beginning of the song
+            //CurrentStream = originalStream; //Otherwise we would lose the original stream reference, so any other seek operation would begin from whereItStopped not from the actual beginning of the song
             StreamBitrate = bitrate;
             Process proc = new Process();
 
@@ -173,6 +166,8 @@ namespace BotPollo.Core
             MemoryStream tempStream = new MemoryStream();
             await StreamToStreamAsync(proc.StandardOutput.BaseStream, tempStream,skipToken,false);
             tempStream.Position = 0;
+            CurrentStreamPlaying = tempStream;
+
 
             PlaybackStarted();
 
@@ -188,7 +183,8 @@ namespace BotPollo.Core
                 }
                 catch (Exception ex)
                 {
-                    break;
+                    PlaybackEnded();
+                    return;
                 }
                 int bytesRead = 0;
                 bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
@@ -202,10 +198,55 @@ namespace BotPollo.Core
             PlaybackEnded();
             Logging.Logger.Console_Log($"Track terminated", Logging.LogLevel.Info);
         }
+        protected async Task SetStreamKeyAsync(string factor, TimeSpan currentTime, Stream originalStream, Stream destinationStream, int bitrate)
+        {
+            StreamBitrate = bitrate;
+            Process proc = new Process();
 
+            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.Arguments = String.Format($" -ss {Math.Floor(currentTime.TotalSeconds)} -i pipe:0 -af asetrate=48000*{factor},aresample=48000,atempo=1/{factor} -ac 2 -f s16le -ar 48000 -b:a {bitrate} pipe:1");
+            proc.StartInfo.UseShellExecute = false;
+            proc.StartInfo.RedirectStandardInput = true;
+            proc.StartInfo.RedirectStandardOutput = true;
+
+            proc.Start();
+
+            Task.Run(async () => { await StreamToStreamAsync(originalStream, proc.StandardInput.BaseStream, skipToken, true, false); });
+            MemoryStream tempStream = new MemoryStream();
+            await StreamToStreamAsync(proc.StandardOutput.BaseStream, tempStream, skipToken, false);
+            tempStream.Position = 0;
+            CurrentStreamPlaying = tempStream;
+
+
+            PlaybackStarted();
+
+            int bufferSize = 1500;
+            byte[] bytes = new byte[bufferSize];
+            var currentSkipToken = skipToken;
+            while (tempStream.Position < tempStream.Length)
+            {
+                try
+                {
+                    currentSkipToken.ThrowIfCancellationRequested();
+                }
+                catch (Exception ex)
+                {
+                    PlaybackEnded();
+                    return;
+                }
+                int bytesRead = 0;
+                bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
+                if (bytesRead == 0) { break; }
+                await destinationStream.WriteAsync(bytes, 0, bytesRead);
+                Array.Clear(bytes);
+            }
+            await destinationStream.FlushAsync();
+
+            PlaybackEnded();
+        }
         protected async Task SetStreamSpeedAsync(double factor, Stream originalStream, Stream destinationStream, int bitrate)
         {
-            CurrentStream = originalStream; //Otherwise we would lose the original stream reference, so any other seek operation would begin from whereItStopped not from the actual beginning of the song
+            //CurrentStream = originalStream; //Otherwise we would lose the original stream reference, so any other seek operation would begin from whereItStopped not from the actual beginning of the song
             StreamBitrate = bitrate;
             Process proc = new Process();
 
@@ -219,7 +260,7 @@ namespace BotPollo.Core
 
             Task.Run(async () =>
             {
-                await StreamToStreamAsync(originalStream, proc.StandardInput.BaseStream, skipToken);
+                await StreamToStreamAsync(originalStream, proc.StandardInput.BaseStream, skipToken,true,false);
             });
 
             PlaybackStarted();
@@ -228,6 +269,55 @@ namespace BotPollo.Core
             await StreamToStreamAsync(ffmpegOut, destinationStream, skipToken, false);
             PlaybackEnded();
             Logging.Logger.Console_Log($"Track terminated", Logging.LogLevel.Info);
+        }
+
+        protected async Task SetStreamEqAsync(string eqParamsString,TimeSpan currentTime, Stream originalStream, Stream destinationStream, int bitrate) //Implementare sincronizzazione
+        {
+            //CurrentStream = originalStream; //Otherwise we would lose the original stream reference, so any other seek operation would begin from whereItStopped not from the actual beginning of the song
+            StreamBitrate = bitrate;
+            Process proc = new Process();
+
+            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.Arguments = String.Format($"-hide_banner -loglevel panic -ss {Math.Floor(currentTime.TotalSeconds)} -i pipe:0 -ac 2 -f s16le {eqParamsString} -ar 48000 -b:a {bitrate} pipe:1");
+            proc.StartInfo.UseShellExecute = false;
+            proc.StartInfo.RedirectStandardInput = true;
+            proc.StartInfo.RedirectStandardOutput = true;
+
+            proc.Start();
+
+            Task.Run(async () => { await StreamToStreamAsync(originalStream, proc.StandardInput.BaseStream, skipToken, true, false); });
+            MemoryStream tempStream = new MemoryStream();
+            await StreamToStreamAsync(proc.StandardOutput.BaseStream, tempStream, skipToken, false);
+            tempStream.Position = 0;
+            CurrentStreamPlaying = tempStream;
+
+
+            PlaybackStarted();
+
+            int bufferSize = 1500;
+            byte[] bytes = new byte[bufferSize];
+            var currentSkipToken = skipToken;
+            while (tempStream.Position < tempStream.Length)
+            {
+                try
+                {
+                    currentSkipToken.ThrowIfCancellationRequested();
+                }
+                catch (Exception ex)
+                {
+                    PlaybackEnded();
+                    return;
+                }
+                int bytesRead = 0;
+                bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
+                if (bytesRead == 0) { break; }
+                await destinationStream.WriteAsync(bytes, 0, bytesRead);
+                Array.Clear(bytes);
+            }
+            await destinationStream.FlushAsync();
+
+            PlaybackEnded();
+
         }
 
         ///<summary>
@@ -245,6 +335,19 @@ namespace BotPollo.Core
             }
             finally
             { await sourceStream.FlushAsync(); await destinationStream.FlushAsync(); if (closeSourceStreamAfter) sourceStream.Close(); if(closeDestinationStreamAfter) destinationStream.Close(); }
+        }
+
+        public virtual void Dispose()
+        {
+            CurrentStream.Close();
+            CurrentStreamPlaying.Close();
+            CurrentYoutubeSourceStream.Close();
+
+            CurrentStream.Dispose();
+            CurrentStreamPlaying.Dispose();
+            CurrentYoutubeSourceStream.Dispose();
+
+            songTimer.Stop();
         }
     }
 }

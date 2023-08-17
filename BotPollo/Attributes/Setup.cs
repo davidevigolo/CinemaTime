@@ -2,14 +2,15 @@
 using Discord;
 using Discord.Net;
 using Discord.WebSocket;
-using System;
-using System.Collections.Generic;
+using MongoDB.Bson;
+using MongoDB.Bson.IO;
+using MongoWrapper.MongoCore;
+using Newtonsoft.Json;
+using System.Buffers.Text;
 using System.Diagnostics;
-using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Windows.Interop;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace BotPollo.Attributes
 {
@@ -105,6 +106,19 @@ namespace BotPollo.Attributes
                 method.Invoke(null, new object[] { msg });
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Logger.Console_Log("User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
+                await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
+                {
+                    user_id = msg.Author.Id,
+                    action = ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(),
+                    event_id = Convert.ToBase64String(SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower()))),
+                    time = DateTime.Now.ToString(),
+                    message_thread = msg.Thread.Id,
+                    message_content = msg.Content,
+                    interaction = msg.Interaction.Id,
+                    interaction_name = msg.Interaction.Name,
+                    source_type = msg.Source.GetType().Name,
+                    channel_id = msg.Channel.Id
+                }.ToBsonDocument());
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }
@@ -118,6 +132,34 @@ namespace BotPollo.Attributes
 
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Logger.Console_Log("User: " + command.User.Username + " Used slash command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
+                Logger.Console_Log("Channel:" + command.Channel.Name + " Id:" + command.ChannelId,LogLevel.Info);
+                Logger.Console_Log("Data:" + command.Data,LogLevel.Info);
+                List<object> objects = new List<object>();
+                foreach (var obj in command.Data.Options)
+                {
+                    objects.Add(new
+                    {
+                        name = obj.Name,
+                        value = obj.Value
+                    });
+                }
+                try
+                {
+                    await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
+                    {
+                        user_id = command.Id,
+                        action = ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(),
+                        event_id = Convert.ToBase64String(SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower()))),
+                        time = DateTime.Now.ToString(),
+                        interaction = command.Type.ToString(),
+                        message_thread = command.Id,
+                        channel_id = command.Channel.Id,
+                        arguments = objects.ToArray()
+                    }.ToBsonDocument());
+                }catch(Exception ex)
+                {
+                    Logger.Console_Log(ex.Message, LogLevel.Error);
+                }
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }

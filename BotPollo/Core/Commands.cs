@@ -1,15 +1,23 @@
 ﻿using BotPollo.Attributes;
 using BotPollo.Core.Exceptions;
 using Discord;
+using Discord.Rest;
 using Discord.WebSocket;
+using FFMpegCore.Enums;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
+using YoutubeExplode.Videos.Streams;
+using static BotPollo.Core.DiscordPlayer;
+using static System.Net.WebRequestMethods;
 
 namespace BotPollo.Core
 {
@@ -26,18 +34,18 @@ namespace BotPollo.Core
         }
 
         [Command("invito")]
-        public static async Task InviteMessage(SocketMessage msg)
+        public static async Task InviteMessage(SocketSlashCommand ssc)
         {
-            var channel = msg.Channel;
+            var channel = ssc.Channel;
             Discord.EmbedBuilder builder = new Discord.EmbedBuilder()
             {
                 Title = "Click here to add the bot to your server",
-                Description = "https://discord.com/api/oauth2/authorize?client_id=885174574591930448&permissions=8&scope=bot",
+                Description = $"https://discord.com/api/oauth2/authorize?client_id={Program.GetBot().CurrentUser.Id}&permissions=8&scope=bot",
                 Color = Discord.Color.Blue,
                 ThumbnailUrl = "https://cdn.discordapp.com/avatars/885174574591930448/e840f87959f3b280e335d78e02263cfa.webp?size=128"
             };
 
-            await channel.SendMessageAsync("", false, builder.Build());
+            await ssc.RespondAsync("",embed: builder.Build());
         }
 
         [Command("creasondaggio")]
@@ -95,27 +103,24 @@ namespace BotPollo.Core
             }
         }
 
-       /* [Command("p")]
-        public static async Task YoutubeSongAsync(SocketMessage msg)
+        [Command("disconnect")]
+        public static async Task Disconnect(SocketSlashCommand ssc)
         {
-            string content = msg.Content;
-            string q = msg.Content.Substring(content.IndexOf('p') + 1);
-            IVoiceChannel voiceChannel = (msg.Author as IGuildUser).VoiceChannel;
-            var audioClient = await voiceChannel.ConnectAsync();
-            player = new DiscordPlayer(audioClient, msg.Channel as IMessageChannel,voiceChannel);
-            await player.AddYoutubeSongAsync(q);
-        }*/
+            DiscordPlayer player = serverPlayersMap[(ulong)ssc.GuildId];
+            player.Dispose();
+        }
 
         [Command("skip")]
         public static async Task Skip(SocketSlashCommand ssc)
         {
+            await ssc.DeferAsync();
             try
             {
                 if (await AssertUserInSameVChannel(ssc))
                 {
                     DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
                     player.Skip();
-                    await ssc.RespondAsync("Song skipped!");
+                    await ssc.FollowupAsync("Song skipped!", ephemeral: true);
                     await Task.Run(() =>
                     {
                         Task.Delay(4000);
@@ -124,13 +129,14 @@ namespace BotPollo.Core
                 }
             }catch(DiscordPlayerNotConnectedException)
             {
-                await ssc.RespondAsync("The bot isn't connected on this server at the moment");
+                await ssc.FollowupAsync("The bot isn't connected on this server at the moment", ephemeral: true);
             }
         }
 
         [Command("time")]
         public static async Task Time(SocketSlashCommand ssc)
         {
+            await ssc.DeferAsync();
             DiscordPlayer player = serverPlayersMap[(ulong)ssc.GuildId];
             if (!player.isPlaying)
             {
@@ -143,10 +149,12 @@ namespace BotPollo.Core
 
         }
 
-        [Command("p","play","pla","pl")]
+        [Command("play","p","pla","pl")]
         [Option("query",ApplicationCommandOptionType.String,true)]
         public static async Task CanzonePollo(SocketSlashCommand ssc)
         {
+            await ssc.DeferAsync();
+            RestUserMessage message;
             /*if(Songs.Count == 0)
             {
                 string[] files = Directory.GetFiles(@"C:\Users\Administrator\Music\");
@@ -193,10 +201,12 @@ namespace BotPollo.Core
                 var response = await dial.GetUserReplyAsync(false, false, false);
                 songIndex = Int32.Parse(response.Content);
                 dial.Close();*/
+                var color = Program.GetBot().GetGuild((ulong)ssc.GuildId).GetUser(ssc.User.Id).Roles.OrderByDescending(x => x.Position).First().Color;
                 EmbedBuilder embed = new EmbedBuilder
                 {
                     Title = "Usage",
-                    Description = "pollo <song name>"
+                    Description = "pollo <song name>",
+                    Color = Program.GetBot().GetGuild((ulong)ssc.GuildId).GetUser(ssc.User.Id).Roles.OrderByDescending(x => x.Position).First().Color
                 }.WithAuthor(new EmbedAuthorBuilder
                 {
                     Name = Program.GetBot().CurrentUser.Username,
@@ -217,11 +227,13 @@ namespace BotPollo.Core
                 {
                     try
                     {
-                        var audioClient = await voiceChannel.ConnectAsync();
-                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel);
+                        var audioClient = await voiceChannel.ConnectAsync(); //Inserisci handling delle troppe persone nel canale
+                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel,Program.SpotifyClient);
                         serverPlayersMap.Add(voiceChannel.GuildId, player);
                         player.NewSongPlaying += Player_NewSongPlaying; //SISTEMA EVENTI CHE NON TRIGGERANO
                         player.SongAdded += Player_SongAdded;
+                        player.PlaylistAdded += Player_PlaylistAdded;
+                        player.PlayerDestroyed += Player_PlayerDestroyed;
                     }
                     catch (Exception ex)
                     {
@@ -233,34 +245,40 @@ namespace BotPollo.Core
                     if (await AssertUserInSameVChannel(ssc))
                     {
                         DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
-                        var res = await player.AddYoutubeSongAsync(q);
+                        var res = await player.AddSongAsync(q);
                         if (!res)
                         {
 
-                            await ssc.RespondAsync($":red_square: Song not found!");
+                            await ssc.FollowupAsync($":red_square: Song not found!", ephemeral: true);
                             return;
                         }
-
-                        await ssc.RespondAsync();
+                        await ssc.FollowupAsync("‎ ", ephemeral: true);
+                        await ssc.DeleteOriginalResponseAsync();
                         return;
                     }
-                    await ssc.RespondAsync(":red_square: You're not in the same voice channel of the bot");
+                    await ssc.FollowupAsync(":red_square: You're not in the same voice channel of the bot", ephemeral: true);
                 }
                 catch(DiscordPlayerNotConnectedException ex)
                 {
-                    await ssc.RespondAsync(":red_square: The bot isn't connected on this server at the moment");
+                    await ssc.FollowupAsync(":red_square: The bot isn't connected on this server at the moment", ephemeral: true);
                 }
             }
             else
             {
-                await ssc.RespondAsync(":red_square: You're not in a valid voice channel");
+                await ssc.FollowupAsync(":red_square: You're not in a valid voice channel", ephemeral: true);
             }
+        }
+        private static void Player_PlayerDestroyed(ulong guildId)
+        {
+            serverPlayersMap.Remove(guildId);
+            Logging.Logger.Console_Log($"Player {guildId} has been disposed", Logging.LogLevel.Info);
         }
 
         [Command("seek")]
         [Option("timestamp",ApplicationCommandOptionType.String,true)]
         public static async Task SeekSongAsync(SocketSlashCommand ssc)
         {
+            ssc.DeferAsync();
             string arg = ssc.Data.Options.First().Value.ToString();
             if(arg.Count(x => x == ':') < 2)
             {
@@ -273,7 +291,7 @@ namespace BotPollo.Core
                 {
                     DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
                     await player.SeekAsync(inSec);
-                    await ssc.RespondAsync("Track resuming at: " + inSec.ToString());
+                    await ssc.FollowupAsync("Track resuming at: " + inSec.ToString(),ephemeral: true);
                     await Task.Run(() =>
                     {
                         Task.Delay(4000);
@@ -281,11 +299,11 @@ namespace BotPollo.Core
                     });
                     return;
                 }
-                await ssc.RespondAsync("You're not in the same voice channel of the bot");
+                await ssc.FollowupAsync("You're not in the same voice channel of the bot",ephemeral: true);
             }
             catch (DiscordPlayerNotConnectedException ex)
             {
-                await ssc.RespondAsync("The bot isn't connected on this server at the moment");
+                await ssc.FollowupAsync("The bot isn't connected on this server at the moment", ephemeral: true);
             }
         }
 
@@ -310,25 +328,148 @@ namespace BotPollo.Core
                 await ssc.RespondAsync("The bot isn't connected on this server at the moment");
             }
         }
-        private static void Player_SongAdded(string name, IMessageChannel commandChannel,DiscordPlayer dp)
+        [Command("pitch","key")]
+        [Option("factor",ApplicationCommandOptionType.String,true)]
+        public static async Task SetPitchAsync(SocketSlashCommand ssc)
         {
-            commandChannel.SendMessageAsync(embed: embedString("Added to queue",name,dp.currentStreamInfo.Bitrate.KiloBitsPerSecond,dp.currentVideoInfo.Author.ChannelTitle, (TimeSpan)dp.currentVideoInfo.Duration));
+            await ssc.DeferAsync();
+            string arg = ssc.Data.Options.First().Value.ToString();
+            try
+            {
+                if (await AssertUserInSameVChannel(ssc))
+                {
+                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    await player.ChangePitchAsync(arg);
+                    await ssc.FollowupAsync("Pitch changed!");
+                    await ssc.DeleteOriginalResponseAsync();
+                    return;
+                }
+                await ssc.FollowupAsync("You're not in the same voice channel of the bot",ephemeral: true);
+            }
+            catch (DiscordPlayerNotConnectedException ex)
+            {
+                await ssc.FollowupAsync("The bot isn't connected on this server at the moment",ephemeral: true);
+            }
+        }
+        private async static void Player_SongAdded(string name, IMessageChannel commandChannel, DiscordPlayer dp)
+        {
+            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
+            var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
+
+            var buttons = new ComponentBuilder();
+            buttons.WithButton("Boost bass", style: ButtonStyle.Primary, customId: "1");
+            buttons.WithButton("Boost mids", style: ButtonStyle.Primary, customId: "2");
+            buttons.WithButton("Boost treble", style: ButtonStyle.Primary, customId: "3");
+            buttons.WithButton("Clean sound", style: ButtonStyle.Primary, customId: "4");
+            buttons.WithButton("8D", style: ButtonStyle.Primary, customId: "5");
+            buttons.WithButton("Lowpass", style: ButtonStyle.Primary, customId: "6");
+            buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
+            if (!dp.HasChannelMessage())
+            {
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+            }
+            var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
+            string embedValue = "";
+            foreach (QueueObject obj in dp.SongQueue)
+            {
+                embedValue += obj.Title + "\r\n";
+            }
+            if (originalEmbed.Fields.Where(x => x.Name == "Queue").Count() != 0)
+                originalEmbed.Fields.Remove(originalEmbed.Fields.Where(x => x.Name == "Queue").First());
+            originalEmbed.WithFields(new EmbedFieldBuilder() { Name = "Queue", Value = embedValue });
+            dp.PlayerMessage.ModifyAsync(x => x.Embed = originalEmbed.Build());
         }
 
-        private static void Player_NewSongPlaying(string name, IMessageChannel commandChannel, DiscordPlayer dp)
+        private async static void Player_NewSongPlaying(string name, IMessageChannel commandChannel, DiscordPlayer dp)
         {
-            commandChannel.SendMessageAsync(embed: embedString("Now playing",name, dp.currentStreamInfo.Bitrate.KiloBitsPerSecond, dp.currentVideoInfo.Author.ChannelTitle, (TimeSpan)dp.currentVideoInfo.Duration));
+            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
+            var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
+
+            var buttons = new ComponentBuilder();
+            buttons.WithButton("Boost bass", style: ButtonStyle.Primary, customId: "1");
+            buttons.WithButton("Boost mids", style: ButtonStyle.Primary, customId: "2");
+            buttons.WithButton("Boost treble", style: ButtonStyle.Primary, customId: "3");
+            buttons.WithButton("Clean sound", style: ButtonStyle.Primary, customId: "4");
+            buttons.WithButton("8D", style: ButtonStyle.Primary, customId: "5");
+            buttons.WithButton("Lowpass", style: ButtonStyle.Primary, customId: "6");
+            buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
+            if (!dp.HasChannelMessage())
+            {
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now Playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+            }
+            var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
+            string embedValue = "";
+            foreach (QueueObject obj in dp.SongQueue)
+            {
+                embedValue += obj.Title + "\r\n";
+            }
+
+            originalEmbed.Description = $"{name}";
+            originalEmbed.Color = color;
+            originalEmbed.ThumbnailUrl = url;
+            originalEmbed.WithAuthor(Program.GetBot().CurrentUser);
+
+            originalEmbed.Fields.Clear();
+            originalEmbed.WithFields(new EmbedFieldBuilder().WithName("Bitrate").WithValue(Math.Truncate(dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond * 100) / 100 + "kb/s").WithIsInline(true));
+            originalEmbed.WithFields(new EmbedFieldBuilder().WithName("Author").WithValue(dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle).WithIsInline(true));
+            originalEmbed.WithFields(new EmbedFieldBuilder().WithName("Video duration").WithValue(dp.CurrentQueueObject.VideoInfo.Duration).WithIsInline(true));
+            if (embedValue != "")
+                originalEmbed.WithFields(new EmbedFieldBuilder() { Name = "Queue", Value = embedValue });
+            originalEmbed.WithTimestamp(DateTime.Now);
+
+            dp.PlayerMessage.ModifyAsync(x => x.Embed = originalEmbed.Build());
+        }
+        private async static void Player_PlaylistAdded(string[] names, IMessageChannel commandChannel, DiscordPlayer dp)
+        {
+            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
+            var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
+
+            var buttons = new ComponentBuilder();
+            buttons.WithButton("Boost bass", style: ButtonStyle.Primary, customId: "1");
+            buttons.WithButton("Boost mids", style: ButtonStyle.Primary, customId: "2");
+            buttons.WithButton("Boost treble", style: ButtonStyle.Primary, customId: "3");
+            buttons.WithButton("Clean sound", style: ButtonStyle.Primary, customId: "4");
+            buttons.WithButton("8D", style: ButtonStyle.Primary, customId: "5");
+            buttons.WithButton("Lowpass", style: ButtonStyle.Primary, customId: "6");
+            buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
+            if (!dp.HasChannelMessage())
+            {
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+            }
+
+            var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
+            string embedValue = "";
+            foreach (QueueObject obj in dp.SongQueue)
+            {
+                if ((embedValue + obj.Title + "\r\n").Length > 1024) break;
+                embedValue += obj.Title + "\r\n";
+            }
+            if (originalEmbed.Fields.Where(x => x.Name == "Queue").Count() != 0)
+                originalEmbed.Fields.Remove(originalEmbed.Fields.Where(x => x.Name == "Queue").First());
+            originalEmbed.WithFields(new EmbedFieldBuilder() { Name = "Queue", Value = embedValue });
+            dp.PlayerMessage.ModifyAsync(x => x.Embed = originalEmbed.Build());
         }
 
-        private static Embed embedString(string action,string song,double bitrate, string author, TimeSpan duration)
+
+
+
+        private static Embed embedString(string action,string song,double bitrate, string author, TimeSpan duration,Discord.Color color,string thumbnailurl = null)
         {
+            if(color == null)
+            {
+                color = Discord.Color.Blue;
+            }
             var botClient = Program.GetBot();
             EmbedBuilder embed = new EmbedBuilder
             {
                 Title = action,
-                Description = $"{song}"
+                Description = $"{song}",
+                Color = color,
+                ThumbnailUrl = thumbnailurl
             }
-            .WithColor(Discord.Color.Blue)
             .WithTimestamp(DateTime.Now);
             embed.Fields.Add(new EmbedFieldBuilder().WithName("Bitrate").WithValue(Math.Truncate(bitrate * 100) / 100 + "kb/s").WithIsInline(true));
             embed.Fields.Add(new EmbedFieldBuilder().WithName("Author").WithValue(author).WithIsInline(true));
@@ -363,7 +504,56 @@ namespace BotPollo.Core
             }
             throw new DiscordPlayerNotConnectedException();
         }
+        public static async Task HandleButtonInteractionAsync(SocketMessageComponent smc)
+        {
 
+            switch(smc.Data.CustomId)
+            {
+                case "1":
+                    var player = serverPlayersMap[(ulong)smc.GuildId];
+                    player.ChangeFiltersAsync(0);
+                    await smc.RespondAsync();
+                    break;
+                case "2":
+                    var player2 = serverPlayersMap[(ulong)smc.GuildId];
+                    player2.ChangeFiltersAsync(1);
+                    await smc.RespondAsync();
+                    break;
+                case "3":
+                    var player3 = serverPlayersMap[(ulong)smc.GuildId];
+                    player3.ChangeFiltersAsync(2);
+                    await smc.RespondAsync();
+                    break;
+                case "4":
+                    var player4 = serverPlayersMap[(ulong)smc.GuildId];
+                    player4.ChangeFiltersAsync(3);
+                    await smc.RespondAsync();
+                    break;
+                case "5":
+                    var player5 = serverPlayersMap[(ulong)smc.GuildId];
+                    player5.ChangeFiltersAsync(4);
+                    await smc.RespondAsync();
+                    break;
+                case "6":
+                    var player6 = serverPlayersMap[(ulong)smc.GuildId];
+                    player6.ChangeFiltersAsync(5);
+                    await smc.RespondAsync();
+                    break;
+                case "100":
+                    await smc.DeferAsync();
+                    var player100 = serverPlayersMap[(ulong)smc.GuildId];
+                    try
+                    {
+                        string lyrics = await player100.GetLyrics();
+                        player100.LyricsMessage = await smc.FollowupAsync(lyrics);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        await smc.FollowupAsync(":red_square: No lyrics found!");
+                    }
+                    break;
+            }
+        } 
         public static async Task<DiscordPlayer> GetServerDiscordPlayer(ulong guildId) => serverPlayersMap.GetValueOrDefault(guildId);
     }
 }

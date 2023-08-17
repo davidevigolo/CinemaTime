@@ -9,6 +9,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MongoWrapper", "MongoWrappe
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebAPI", "WebAPI\WebAPI.csproj", "{4EDFB73E-EAFA-4A91-8F33-8F50E823C3DE}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "UDPStatusServer", "UDPStatusServer\UDPStatusServer.csproj", "{8A536140-01C0-48CE-AEDA-0E5D79A526EA}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebPlayer", "WebPlayer\WebPlayer.csproj", "{9F27236C-B550-4BEF-9A0A-FF222FF2F807}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +31,14 @@ Global
 		{4EDFB73E-EAFA-4A91-8F33-8F50E823C3DE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4EDFB73E-EAFA-4A91-8F33-8F50E823C3DE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4EDFB73E-EAFA-4A91-8F33-8F50E823C3DE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F27236C-B550-4BEF-9A0A-FF222FF2F807}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F27236C-B550-4BEF-9A0A-FF222FF2F807}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F27236C-B550-4BEF-9A0A-FF222FF2F807}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F27236C-B550-4BEF-9A0A-FF222FF2F807}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

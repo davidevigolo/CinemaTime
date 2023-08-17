@@ -8,13 +8,11 @@ using System.IO.MemoryMappedFiles;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
-using System.Web.Http;
-using System.Web.Http.Results;
 using static BotPollo.Core.DiscordPlayer;
 
 namespace BotPollo
 {
-    public class CinemaTimeController : ApiController
+    public class CinemaTimeController
     {
         public const int MMF_MAX_SIZE = 4092;
         public const int MMF_VIEW_SIZE = 4092;

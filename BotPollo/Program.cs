@@ -6,11 +6,16 @@ using System.Threading.Tasks;
 using MongoWrapper.MongoCore;
 using System.IO;
 using System.Diagnostics;
-using System.Web.Http;
-using Microsoft.Owin.Hosting;
 using System.Net.Http;
 using WebAPI;
 using Discord;
+using System.Net.Sockets;
+using Newtonsoft.Json;
+using System.Text;
+using System.Net;
+using UDPStatusServer.Messages;
+using BotPollo.UDP;
+using SpotifyAPI.Web;
 
 namespace BotPollo
 {
@@ -22,6 +27,7 @@ namespace BotPollo
         public static string Token { get; private set; }
         public static DiscordSocketClient GetBot() { return DiscordClient; }
         public static MongoNode Node { get; private set; }
+        public static SpotifyClient SpotifyClient { get; private set; }
         public static bool EnableNotifications { get; set; }
         private delegate Task ConsoleCommandAsyncCallback(string content, params string[] args);
         public async Task MainAsync(string[] args)
@@ -49,6 +55,7 @@ namespace BotPollo
                 client.MessageReceived += Attributes.Setup.Command_HandlerAsync;
                 client.UserVoiceStateUpdated += Attributes.Setup.UserJoinedVChannelHandlerAsync;
                 client.SlashCommandExecuted += Attributes.Setup.SlashCommandHandlerAsync;
+                client.ButtonExecuted += Commands.HandleButtonInteractionAsync;
                 client.Ready += async () => { Attributes.Setup.RegisterCommands(new Commands()); };
 
                 Token = File.ReadAllText("token.txt"); //It's already expired of course
@@ -56,18 +63,20 @@ namespace BotPollo
                 await client.StartAsync();
                 DiscordClient = client;
 
+                //Spotify
+
+                var config = SpotifyClientConfig.CreateDefault().WithAuthenticator(new ClientCredentialsAuthenticator("5b60c795a9874f5b943362f0020b47d4", "99516aca0c26435398e543831e0c7113"));
+
+                SpotifyClient = new SpotifyClient(config);
+
+                //SpotifyEnd
+
                 Logger.Console_Log("Starting Api server...", LogLevel.Info);
                 Thread t = new Thread(() =>
                 {
-                    if (args.Contains("-p"))
-                    {
-                        int portArgIndex = args.TakeWhile(x => x != "-p").Count() + 1;
-                        ApiStarter.Main(Int32.Parse(args[portArgIndex]));
-                    }
-                    else
-                    {
-                        ApiStarter.Main(80);
-                    }
+                    ConnectionManager cm = new ConnectionManager(Commands.serverPlayersMap);
+                    cm.Start();  
+
                 });
 
                 t.Start();
@@ -179,6 +188,15 @@ namespace BotPollo
                 proc.StartInfo.UseShellExecute = false;
 
                 proc.Start();
+            }
+            if(name == "serverlist")
+            {
+
+                Logger.Console_Log("Servers active:", LogLevel.Info);
+                foreach (var guild in DiscordClient.Guilds)
+                {
+                    Logger.Console_Log($"{guild.Name} - {guild.MemberCount} Users - {guild.PremiumTier.ToString()}", LogLevel.Info);
+                }
             }
         }
     }
