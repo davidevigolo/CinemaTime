@@ -58,7 +58,7 @@ namespace UDPStatusServer
                     var player = Commands.serverPlayersMap[guildId];
                     var response = new
                     {
-                        CurrentSong = player.currentVideoInfo,
+                        CurrentSong = player.CurrentQueueObject,
                         Queue = player.SongQueue.ToArray(),
                     };
                     UdpClient responseClient = new UdpClient(remoteEndPoint);

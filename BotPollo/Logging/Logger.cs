@@ -19,7 +19,7 @@ namespace BotPollo.Logging
         Database,
         WebAPI
     }
-    class Logger
+    public class Logger
     {
         public async static Task Client_LogAsync(Discord.LogMessage arg) //Logging discord async
         {

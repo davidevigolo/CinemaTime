@@ -17,11 +17,11 @@ namespace BotPollo.Attributes
     class Setup
     {
         private static Dictionary<string, MethodInfo> CommandMap = new Dictionary<string, MethodInfo>();
-        public static void RegisterCommands(Object obj)
+        public static void RegisterCommands<T>()
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
-            var types = from t in obj.GetType().GetMethods() where t.GetCustomAttributes<Command>().Count() > 0 select t;
+            var types = from t in typeof(T).GetMethods() where t.GetCustomAttributes<Command>().Count() > 0 select t;
 
             foreach (MethodInfo mi in types)
             {
@@ -106,7 +106,7 @@ namespace BotPollo.Attributes
                 method.Invoke(null, new object[] { msg });
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Logger.Console_Log("User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
-                await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
+                /*await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
                 {
                     user_id = msg.Author.Id,
                     action = ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(),
@@ -118,7 +118,7 @@ namespace BotPollo.Attributes
                     interaction_name = msg.Interaction.Name,
                     source_type = msg.Source.GetType().Name,
                     channel_id = msg.Channel.Id
-                }.ToBsonDocument());
+                }.ToBsonDocument());*/
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }
@@ -134,6 +134,7 @@ namespace BotPollo.Attributes
                 Logger.Console_Log("User: " + command.User.Username + " Used slash command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
                 Logger.Console_Log("Channel:" + command.Channel.Name + " Id:" + command.ChannelId,LogLevel.Info);
                 Logger.Console_Log("Data:" + command.Data,LogLevel.Info);
+                Serilog.Log.Logger.Information<SocketSlashCommand>("Command used", command);
                 List<object> objects = new List<object>();
                 foreach (var obj in command.Data.Options)
                 {
@@ -145,7 +146,7 @@ namespace BotPollo.Attributes
                 }
                 try
                 {
-                    await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
+                    /*await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
                     {
                         user_id = command.Id,
                         action = ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(),
@@ -155,10 +156,11 @@ namespace BotPollo.Attributes
                         message_thread = command.Id,
                         channel_id = command.Channel.Id,
                         arguments = objects.ToArray()
-                    }.ToBsonDocument());
+                    }.ToBsonDocument());*/
                 }catch(Exception ex)
                 {
                     Logger.Console_Log(ex.Message, LogLevel.Error);
+                    Serilog.Log.Logger.Error(ex, ex.Message);
                 }
                 Console.ForegroundColor = ConsoleColor.White;
             }

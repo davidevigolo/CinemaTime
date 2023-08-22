@@ -1,51 +1,89 @@
 ﻿using BotPollo.Core;
 using BotPollo.Logging;
-using Discord.WebSocket;
-using System;
-using System.Threading.Tasks;
-using MongoWrapper.MongoCore;
-using System.IO;
-using System.Diagnostics;
-using System.Net.Http;
-using WebAPI;
-using Discord;
-using System.Net.Sockets;
-using Newtonsoft.Json;
-using System.Text;
-using System.Net;
-using UDPStatusServer.Messages;
 using BotPollo.UDP;
+using BotPolloG.Grpc;
+using Discord.WebSocket;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Serilog;
 using SpotifyAPI.Web;
+using System.Diagnostics;
 
 namespace BotPollo
 {
     class Program
     {
-        static void Main(string[] args) => new Program().MainAsync(args).GetAwaiter().GetResult(); //Creating never-ending command-waiting process
+        //static void Main(string[] args) => new Program().MainAsync(args).GetAwaiter().GetResult(); //Creating never-ending command-waiting process
 
         public static DiscordSocketClient DiscordClient { get; private set; }
         public static string Token { get; private set; }
         public static DiscordSocketClient GetBot() { return DiscordClient; }
-        public static MongoNode Node { get; private set; }
+        //public static MongoNode Node { get; private set; }
         public static SpotifyClient SpotifyClient { get; private set; }
         public static bool EnableNotifications { get; set; }
         private delegate Task ConsoleCommandAsyncCallback(string content, params string[] args);
+        static void Main(string[] args)
+        {
+            var builder = new ConfigurationBuilder();
+            BuildConfig(builder);
+
+            Log.Logger = new LoggerConfiguration()
+                .WriteTo.Console()
+                .WriteTo.Seq("http://localhost:5341")
+                .Enrich.WithProcessId()
+                .Enrich.WithThreadName()
+                .Enrich.WithProcessId()
+                .Enrich.WithProcessName()
+                .Enrich.WithThreadId()
+                .Enrich.WithEnvironmentName()
+                .Enrich.WithMemoryUsage()
+                .CreateLogger();
+
+            Log.Logger.Information("Application starting");
+
+            var host = Host.CreateDefaultBuilder()
+                .ConfigureServices((context, services) =>
+                {
+                    services.AddSingleton<IDiscordBotService,DiscordBotService>();
+                })
+                .UseSerilog()
+                .Build();
+
+            var svc = ActivatorUtilities.CreateInstance<IDiscordBotService>(host.Services);
+
+            svc.Run();
+        }
+        static void BuildConfig(IConfigurationBuilder configurationBuilder)
+        {
+            configurationBuilder.SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true)
+                .AddEnvironmentVariables()
+                .Build();
+        }
         public async Task MainAsync(string[] args)
         {
             try
             {
                 if (args.Length > 0)
                 {
-                    Logger.Console_Log($"Launch args: {args[0]} ", LogLevel.Info);
+                    Log.Logger.Information($"Launch args: {args[0]}");
                 }
                 //MongoDB
 
                 string dbName = "cinematime";
-                Node = new MongoNode("mongodb://localhost", dbName);
+                /*Node = new MongoNode("mongodb://localhost", dbName);
                 Node.Log += (string message) => { Logger.Console_Log(message, LogLevel.Database); };
-                Node.Connect();
+                Node.Connect();*/
                 EnableNotifications = true;
 
+                #region grpcsetup
+
+                GrpcSetup.GrpcStartup(new string[] { });
+
+                #endregion
                 //Discord
                 DiscordSocketConfig dSocketConfig = new DiscordSocketConfig();
                 dSocketConfig.GatewayIntents = Discord.GatewayIntents.MessageContent | Discord.GatewayIntents.All;
@@ -71,23 +109,22 @@ namespace BotPollo
 
                 //SpotifyEnd
 
-                Logger.Console_Log("Starting Api server...", LogLevel.Info);
+                Log.Logger.Information("Starting Api server...");
                 Thread t = new Thread(() =>
                 {
                     ConnectionManager cm = new ConnectionManager(Commands.serverPlayersMap);
                     cm.Start();  
 
                 });
-
                 t.Start();
 
-                Logger.Console_Log("Api server started succesfully", LogLevel.Info);
+                Log.Logger.Information("Api server started succesfully");
 
                 //Disconnecting bot from voice channels to prevent errors with DiscordPlayer
 
                 if (args.Length > 0 && args[0].Equals("-i"))
                 {
-                    Logger.Console_Log("Inputs from console are now disabled", LogLevel.Warning);
+                    Log.Logger.Warning("Inputs from console are now disabled!");
                     await Task.Delay(-1);
                 }
                 else
@@ -97,7 +134,7 @@ namespace BotPollo
             }
             catch (Discord.Net.HttpException)
             {
-                Logger.Console_Log("Invalid token, please check the token file", Logging.LogLevel.Fatal);
+                Log.Logger.Fatal("Invalid Discord token.");
             }
         }
 
@@ -199,5 +236,95 @@ namespace BotPollo
                 }
             }
         }
+
+        class DiscordBotService : IDiscordBotService
+        {
+            private readonly ILogger<DiscordBotService> _logger;
+            private readonly IConfiguration _conf;
+            public DiscordBotService(ILogger<DiscordBotService> logger, IConfiguration config)
+            {
+                _logger = logger;
+                _conf = config;
+            }
+            public async void Run()
+            {
+                try
+                {
+                    /*if (args.Length > 0)
+                    {
+                        Log.Logger.Information($"Launch args: {args[0]}");
+                    }*/
+                    //MongoDB
+
+                    string dbName = "cinematime";
+                    /*Node = new MongoNode("mongodb://localhost", dbName);
+                    Node.Log += (string message) => { Logger.Console_Log(message, LogLevel.Database); };
+                    Node.Connect();*/
+                    EnableNotifications = true;
+
+                    #region grpcsetup
+
+                    GrpcSetup.GrpcStartup(new string[] { });
+
+                    #endregion
+                    //Discord
+                    DiscordSocketConfig dSocketConfig = new DiscordSocketConfig();
+                    dSocketConfig.GatewayIntents = Discord.GatewayIntents.MessageContent | Discord.GatewayIntents.All;
+                    var client = new DiscordSocketClient(dSocketConfig);
+
+                    client.Log += Logging.Logger.Client_LogAsync;
+                    client.MessageReceived += Attributes.Setup.Command_HandlerAsync;
+                    client.UserVoiceStateUpdated += Attributes.Setup.UserJoinedVChannelHandlerAsync;
+                    client.SlashCommandExecuted += Attributes.Setup.SlashCommandHandlerAsync;
+                    client.ButtonExecuted += Commands.HandleButtonInteractionAsync;
+                    client.Ready += async () => { Attributes.Setup.RegisterCommands<Commands>(); };
+
+                    Token = File.ReadAllText("token.txt"); //It's already expired of course
+                    await client.LoginAsync(Discord.TokenType.Bot, Token);
+                    await client.StartAsync();
+                    DiscordClient = client;
+
+                    //Spotify
+
+                    var config = SpotifyClientConfig.CreateDefault().WithAuthenticator(new ClientCredentialsAuthenticator("5b60c795a9874f5b943362f0020b47d4", "99516aca0c26435398e543831e0c7113"));
+
+                    SpotifyClient = new SpotifyClient(config);
+
+                    //SpotifyEnd
+
+                    Log.Logger.Information("Starting Api server...");
+                    Thread t = new Thread(() =>
+                    {
+                        ConnectionManager cm = new ConnectionManager(Commands.serverPlayersMap);
+                        cm.Start();
+
+                    });
+                    t.Start();
+
+                    Log.Logger.Information("Api server started succesfully");
+
+                    //Disconnecting bot from voice channels to prevent errors with DiscordPlayer
+
+                    /*if (args.Length > 0 && args[0].Equals("-i"))
+                    {
+                        Log.Logger.Warning("Inputs from console are now disabled!");
+                        await Task.Delay(-1);
+                    }
+                    else
+                    {
+                        await WaitForCommandAsync(DispatchCommandAsync); //This will be awaited forever
+                    }*/
+                }
+                catch (Discord.Net.HttpException)
+                {
+                    Log.Logger.Fatal("Invalid Discord token.");
+                }
+            }
+        }
+    }
+
+    internal interface IDiscordBotService
+    {
+        public void Run();
     }
 }

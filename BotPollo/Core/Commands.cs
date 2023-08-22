@@ -3,27 +3,16 @@ using BotPollo.Core.Exceptions;
 using Discord;
 using Discord.Rest;
 using Discord.WebSocket;
-using FFMpegCore.Enums;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
+using Serilog;
 using System.Net;
-using System.Net.Sockets;
-using System.Runtime.Intrinsics.Arm;
-using System.Runtime.Intrinsics.X86;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml.Linq;
-using YoutubeExplode.Videos.Streams;
 using static BotPollo.Core.DiscordPlayer;
-using static System.Net.WebRequestMethods;
 
 namespace BotPollo.Core
 {
-    public class Commands
+    public class Commands : ICommandService
     {
         public static Dictionary<ulong, DiscordPlayer> serverPlayersMap = new Dictionary<ulong, DiscordPlayer>();
+        private static readonly ILogger _logger;
 
         [Command("ping")]
         public static async Task CheckPunti(SocketMessage msg)
@@ -228,7 +217,7 @@ namespace BotPollo.Core
                     try
                     {
                         var audioClient = await voiceChannel.ConnectAsync(); //Inserisci handling delle troppe persone nel canale
-                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel,Program.SpotifyClient);
+                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel,Program.SpotifyClient,_logger);
                         serverPlayersMap.Add(voiceChannel.GuildId, player);
                         player.NewSongPlaying += Player_NewSongPlaying; //SISTEMA EVENTI CHE NON TRIGGERANO
                         player.SongAdded += Player_SongAdded;
@@ -367,13 +356,13 @@ namespace BotPollo.Core
             buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
             if (!dp.HasChannelMessage())
             {
-                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.VideoInfo.Title}]({dp.CurrentQueueObject.VideoInfo.Title})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
             }
             var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
             string embedValue = "";
             foreach (QueueObject obj in dp.SongQueue)
             {
-                embedValue += obj.Title + "\r\n";
+                embedValue += obj.VideoInfo.Title + "\r\n";
             }
             if (originalEmbed.Fields.Where(x => x.Name == "Queue").Count() != 0)
                 originalEmbed.Fields.Remove(originalEmbed.Fields.Where(x => x.Name == "Queue").First());
@@ -397,13 +386,13 @@ namespace BotPollo.Core
             buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
             if (!dp.HasChannelMessage())
             {
-                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now Playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now Playing", $"[{dp.CurrentQueueObject.VideoInfo.Title}]({dp.CurrentQueueObject.VideoInfo.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
             }
             var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
             string embedValue = "";
             foreach (QueueObject obj in dp.SongQueue)
             {
-                embedValue += obj.Title + "\r\n";
+                embedValue += obj.VideoInfo.Title + "\r\n";
             }
 
             originalEmbed.Description = $"{name}";
@@ -437,15 +426,15 @@ namespace BotPollo.Core
             buttons.WithButton("Lyrics", style: ButtonStyle.Secondary, customId: "100");
             if (!dp.HasChannelMessage())
             {
-                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.Title}]({dp.CurrentQueueObject.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
+                dp.PlayerMessage = await commandChannel.SendMessageAsync(embed: embedString("Now playing", $"[{dp.CurrentQueueObject.VideoInfo.Title}]({dp.CurrentQueueObject.VideoInfo.Url})", dp.CurrentQueueObject.StreamInfo.Bitrate.KiloBitsPerSecond, dp.CurrentQueueObject.VideoInfo.Author.ChannelTitle, (TimeSpan)dp.CurrentQueueObject.VideoInfo.Duration, color, url), components: buttons.Build());
             }
 
             var originalEmbed = dp.PlayerMessage.Embeds.First().ToEmbedBuilder();
             string embedValue = "";
             foreach (QueueObject obj in dp.SongQueue)
             {
-                if ((embedValue + obj.Title + "\r\n").Length > 1024) break;
-                embedValue += obj.Title + "\r\n";
+                if ((embedValue + obj.VideoInfo.Title + "\r\n").Length > 1024) break;
+                embedValue += obj.VideoInfo.Title + "\r\n";
             }
             if (originalEmbed.Fields.Where(x => x.Name == "Queue").Count() != 0)
                 originalEmbed.Fields.Remove(originalEmbed.Fields.Where(x => x.Name == "Queue").First());
@@ -555,5 +544,10 @@ namespace BotPollo.Core
             }
         } 
         public static async Task<DiscordPlayer> GetServerDiscordPlayer(ulong guildId) => serverPlayersMap.GetValueOrDefault(guildId);
+    }
+
+    public interface ICommandService
+    {
+        //Free for future implementation
     }
 }

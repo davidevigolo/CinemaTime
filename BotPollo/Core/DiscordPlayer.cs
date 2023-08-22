@@ -3,9 +3,11 @@ using AngleSharp.Html.Parser;
 using BotPollo.Logging;
 using Discord;
 using Discord.Audio;
+using DnsClient.Internal;
 using Genius;
 using Genius.Models;
 using Genius.Models.Response;
+using Microsoft.Extensions.Logging;
 using RestSharp;
 using SpotifyAPI.Web;
 using System.Collections;
@@ -33,26 +35,25 @@ namespace BotPollo.Core
         public Queue SongQueue { get; private set; }
         public bool isPlaying { get; private set; }
         public IAudioClient AudioClient { get; private set; }
-        public IVoiceChannel AudioChannel { get; set; }
+        public IVoiceChannel AudioChannel { get; private set; }
         private AudioOutStream clientOutStream;
-        private IMessageChannel guildCommandChannel;
-        internal QueueObject CurrentQueueObject { get; private set; }
+        public IMessageChannel GuildCommandChannel { get; private set; }
+        public QueueObject CurrentQueueObject { get; private set; }
         private System.Timers.Timer AFKTimer;
         private object eventSynchronization = new object();
-        public IUserMessage PlayerMessage { get; set; } //To keep UI cleaner in discord channels
-        public IUserMessage LyricsMessage { get; set; } //Delete lyrics after playback ended
+        public IUserMessage PlayerMessage { get; internal set; } //To keep UI cleaner in discord channels
+        public IUserMessage LyricsMessage { get; internal set; } //Delete lyrics after playback ended
         private bool manualInterruption = false; //Usato per quando viene ricreata la stream che parte da un'altro punto, per non eseguire PlayBackEnded e passare alla prossima canzone
         private SemaphoreSlim QueueSemaphore;
-        internal struct QueueObject
+        private Microsoft.Extensions.Logging.ILogger logger;
+        public struct QueueObject
         {
             internal IStreamInfo StreamInfo { get; set; }
-            internal string Title { get; set; }
-            internal string Url { get; set; }
             internal IVideo VideoInfo { get; set; }
             internal string UserQuery { get; set; }
         }
 
-        public DiscordPlayer(IAudioClient audioClient,IMessageChannel commandChannel, IVoiceChannel audioChannel, SpotifyClient spotifyClient)
+        public DiscordPlayer(IAudioClient audioClient,IMessageChannel commandChannel, IVoiceChannel audioChannel, SpotifyClient spotifyClient, Microsoft.Extensions.Logging.ILogger logger)
         {
             PlaybackStarted += PlaybackStartedHandler;
             PlaybackEnded += PlaybackEndedHandlerAsync;
@@ -61,12 +62,13 @@ namespace BotPollo.Core
             isPlaying = false;
             SongQueue = new Queue();
             clientOutStream = AudioClient.CreatePCMStream(AudioApplication.Music, audioChannel.Bitrate > 256000 ? 256000 : audioChannel.Bitrate, 1000);
-            guildCommandChannel = commandChannel;
+            GuildCommandChannel = commandChannel;
             AFKTimer = new System.Timers.Timer();
             AFKTimer.Interval = 30 * 1000;
             AFKTimer.Elapsed += AFKTimer_Elapsed;
             QueueSemaphore = new SemaphoreSlim(1);
             this.spotifyClient = spotifyClient;
+            this.logger = logger;
 
             //ulong serverId = (commandChannel as IGuildChannel).Guild.Id;
             //MMF = MemoryMappedFile.CreateNew(serverId.ToString(), MMF_MAX_SIZE);
@@ -96,7 +98,7 @@ namespace BotPollo.Core
             }
             catch (Exception ex)
             {
-                Logger.Console_Log("Be sure to grant permissions for the bot on this channel (create,delete)",LogLevel.Warning);
+                logger.LogWarning("Be sure to grant permissions for the bot on this channel (create,delete)");
             }
             try
             {
@@ -107,7 +109,7 @@ namespace BotPollo.Core
             }
             catch (Exception ex)
             {
-                Logger.Console_Log("Be sure to grant permissions for the bot on this channel (create,delete)",LogLevel.Warning);
+                logger.LogWarning("Be sure to grant permissions for the bot on this channel (create,delete)");
             }
             PlayerDestroyed(AudioChannel.GuildId);
         }
@@ -127,7 +129,7 @@ namespace BotPollo.Core
                 }
                 catch (Exception ex)
                 {
-                    await guildCommandChannel.SendMessageAsync("Be sure to grant permissions for the bot on this channel (create,delete)");
+                    await GuildCommandChannel.SendMessageAsync("Be sure to grant permissions for the bot on this channel (create,delete)");
                 }
                 try
                 {
@@ -138,7 +140,7 @@ namespace BotPollo.Core
                 }
                 catch (Exception ex)
                 {
-                    await guildCommandChannel.SendMessageAsync("Be sure to grant permissions for the bot on this channel (create,delete)");
+                    await GuildCommandChannel.SendMessageAsync("Be sure to grant permissions for the bot on this channel (create,delete)");
                 }
                 Dispose();
             }
@@ -285,14 +287,17 @@ namespace BotPollo.Core
 
             }catch (ArgumentException ex)
             {
-                Logging.Logger.Console_Log(ex.Message,Logging.LogLevel.Error);
+                logger.LogError(ex.Message);
                 return false;
             }catch (InvalidOperationException ex)
             {
-                Logging.Logger.Console_Log(ex.Message, Logging.LogLevel.Error);
+                logger.LogError(ex.Message);
                 return false;
             }
-            QueueSemaphore.Release();
+            finally
+            {
+                QueueSemaphore.Release();
+            }
             return true;
         }
         private async Task<AudioOnlyStreamInfo?> GetStreamInfo(VideoId id, YoutubeClient youtubeClient)
@@ -318,8 +323,6 @@ namespace BotPollo.Core
                 var container = new QueueObject
                 {
                     StreamInfo = streamInfo,
-                    Title = video.Title,
-                    Url = video.Url,
                     VideoInfo = video,
                     UserQuery = query
                 };
@@ -332,8 +335,6 @@ namespace BotPollo.Core
                 CurrentQueueObject = new QueueObject //this goes first because if for any reason SetYoutubeStream starts the playback before this object is set, NullPointer will be thrown as the message will have null video info.
                 {
                     StreamInfo = streamInfo,
-                    Title = video.Title,
-                    Url = video.Url,
                     VideoInfo = video,
                     UserQuery = query
                 };
@@ -354,15 +355,15 @@ namespace BotPollo.Core
             {
                 names.Add(videos[i].Title);
             }
-            PlaylistAdded(names.ToArray(), guildCommandChannel, this);
+            PlaylistAdded(names.ToArray(), GuildCommandChannel, this);
         }
         private async Task AddSongToQueue(IVideo video, string query, YoutubeClient client)
         {
             int eventNumber = await AddSong(video, query, client);
             if (eventNumber == 0)
-                NewSongPlaying($"[{video.Title}]({video.Url})", guildCommandChannel, this);
+                NewSongPlaying($"[{video.Title}]({video.Url})", GuildCommandChannel, this);
             else
-                SongAdded($"[{video.Title}]({video.Url})", guildCommandChannel, this);
+                SongAdded($"[{video.Title}]({video.Url})", GuildCommandChannel, this);
         }
 
         public bool Skip()
@@ -507,7 +508,7 @@ namespace BotPollo.Core
             var restClient = new RestClient();
             var restRequest = new RestRequest(url);
             restRequest.AddHeader("Authorization", $"Bearer {apiKey}");
-            var restResponse = restClient.Execute(restRequest);
+            var restResponse = restClient.Execute<string>(restRequest);
             var lyrics = restResponse.Content;
 
             HtmlParser parser = new HtmlParser();
@@ -604,7 +605,7 @@ namespace BotPollo.Core
                     {
                         await LyricsMessage.DeleteAsync();
                     }
-                    NewSongPlaying($"[{entry.Title}]({entry.Url})", guildCommandChannel, this);
+                    NewSongPlaying($"[{entry.VideoInfo.Title}]({entry.VideoInfo.Url})", GuildCommandChannel, this);
                     return;
                 }
                 else

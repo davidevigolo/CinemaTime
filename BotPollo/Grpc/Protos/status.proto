@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+option csharp_namespace = "BotPollo.Grpc";
+
+package botpollogrpc;
+
+
+service Status {
+
+  rpc GetStatus (StatusRequest) returns (StatusResponse);
+  rpc GetCurrentSong(CurrentSongRequest) returns (CurrentSongResponse);
+}
+
+message StatusRequest {
+	uint64 guildId = 1;
+}
+
+message StatusResponse {
+	bool isPlaying = 1;
+	uint64 messageChannel = 2;
+	uint64 voiceChannel = 3;
+}
+
+message CurrentSongRequest {
+	uint64 guildId = 1;
+}
+
+message CurrentSongResponse {
+	string title = 1;
+	string url = 2;
+	string author = 3;
+	double bitrate = 4;
+	repeated string thumbnailUrls = 5;
+}
+
+
+
+
