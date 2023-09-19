@@ -7,8 +7,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BotPollo", "BotPollo\BotPol
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MongoWrapper", "MongoWrapper\MongoWrapper.csproj", "{E580C41B-51D3-4223-889E-469264E38FF8}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "UDPStatusServer", "UDPStatusServer\UDPStatusServer.csproj", "{8A536140-01C0-48CE-AEDA-0E5D79A526EA}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -23,10 +21,6 @@ Global
 		{E580C41B-51D3-4223-889E-469264E38FF8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E580C41B-51D3-4223-889E-469264E38FF8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E580C41B-51D3-4223-889E-469264E38FF8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{8A536140-01C0-48CE-AEDA-0E5D79A526EA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

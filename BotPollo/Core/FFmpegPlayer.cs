@@ -15,9 +15,11 @@ namespace BotPollo.Core
         public event PlaybackStartedCallback PlaybackStarted;
         protected System.Threading.CancellationTokenSource tokenSource;
         protected System.Threading.CancellationToken skipToken;
-        internal Stream CurrentYoutubeSourceStream { get; private set; }
-        internal Stream CurrentStream { get; private set; } //Original stream fetched from youtube
+        private bool isPaused;
+        internal Stream CurrentYoutubeSourceStream { get; private set; } //Original stream fetched from youtube
+        internal Stream CurrentStream { get; private set; } //Original stream fetched from youtube processed by ffmpeg but not consumed by ffmpeg
         internal Stream CurrentStreamPlaying { get; private set; }  //Current stream represents the current song stream but it's just a copy, that is consumed by ffmpeg.
+        internal TaskCompletionSource PauseTask { get; private set; }
         internal int StreamBitrate { get; private set; }
         internal Stopwatch songTimer { get; private set; }
         protected Task CurrentOperation { get; set; }
@@ -27,6 +29,8 @@ namespace BotPollo.Core
             tokenSource = new System.Threading.CancellationTokenSource();
             skipToken = tokenSource.Token;
             songTimer = new Stopwatch();
+            isPaused = false;
+            PauseTask = new TaskCompletionSource();
         }
 
         //private static async Task<Process> CreateStreamAsync(string path)
@@ -88,7 +92,6 @@ namespace BotPollo.Core
             {
                 await StreamToStreamAsync(ms, destStrm, skipToken, closeSourceStreamAfter: false);
             });
-            PlaybackStarted();
             Logging.Logger.Console_Log($"Piping stream to discord audio channel", Logging.LogLevel.AudioManager);
             var ffmpegOut = proc.StandardOutput.BaseStream;
             await StreamToStreamAsync(ffmpegOut, ms2, skipToken, false);
@@ -102,6 +105,7 @@ namespace BotPollo.Core
 
             CurrentStreamPlaying = ms2;
 
+            PlaybackStarted();
             int bufferSize = 1500;
             byte[] bytes = new byte[bufferSize];
 
@@ -111,13 +115,16 @@ namespace BotPollo.Core
                 try
                 {
                     currentSkipToken.ThrowIfCancellationRequested();
-
                 }
                 catch (Exception ex)
                 {
                     Logger.Console_Log("Track has been skipped or seeked", LogLevel.Info);
                     PlaybackEnded();
                     return;
+                }
+                if(isPaused)
+                {
+                    await PauseTask.Task;
                 }
                 int bytesRead = 0;
                 bytesRead = await ms2.ReadAsync(bytes, 0, bytes.Length);
@@ -186,6 +193,10 @@ namespace BotPollo.Core
                     PlaybackEnded();
                     return;
                 }
+                if (isPaused)
+                {
+                    await PauseTask.Task;
+                }
                 int bytesRead = 0;
                 bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
                 if (bytesRead == 0) { break; }
@@ -233,6 +244,10 @@ namespace BotPollo.Core
                 {
                     PlaybackEnded();
                     return;
+                }
+                if (isPaused)
+                {
+                    await PauseTask.Task;
                 }
                 int bytesRead = 0;
                 bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
@@ -308,6 +323,10 @@ namespace BotPollo.Core
                     PlaybackEnded();
                     return;
                 }
+                if (isPaused)
+                {
+                    await PauseTask.Task;
+                }
                 int bytesRead = 0;
                 bytesRead = await tempStream.ReadAsync(bytes, 0, bytes.Length);
                 if (bytesRead == 0) { break; }
@@ -348,6 +367,17 @@ namespace BotPollo.Core
             CurrentYoutubeSourceStream.Dispose();
 
             songTimer.Stop();
+        }
+
+        public virtual void Pause()
+        {
+            PauseTask = new TaskCompletionSource(); //Set this first to avoid deadlocks: loop stops but waits on the old task forever (it shouldn't because a completed task skips the await)
+            isPaused = true;
+        }
+        public virtual void Resume()
+        {
+            isPaused = false; //Execute this first to avoid a deadlock: Task gets returned but isPaused stays true, possibly awaiting the old task forever (it shouldn't because a completed task skips the await)
+            PauseTask.SetResult();
         }
     }
 }

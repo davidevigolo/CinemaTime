@@ -1,5 +1,7 @@
-﻿using BotPollo.Core;
+﻿using BotPollo.Attributes;
+using BotPollo.Core;
 using BotPollo.Logging;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Net;
 using System.Net.Sockets;
@@ -8,16 +10,23 @@ using UDPStatusServer.Messages;
 
 namespace BotPollo.UDP
 {
-    public class ConnectionManager
+    public interface IConnectionManager
+    {
+        //Dictionary<ulong, IDiscordPlayer> Players { get; set; }
+        void Start();
+    }
+
+    public class ConnectionManager : IConnectionManager
     {
 
-        UdpClient listener { get; set; }
-        IPEndPoint[] EndPoints { get; set; }
-        Dictionary<ulong, DiscordPlayer> Players { get; set; }
-        public ConnectionManager(Dictionary<ulong, DiscordPlayer> serverPlayersMap)
+        private UdpClient listener { get; set; }
+        private IPEndPoint[] EndPoints { get; set; }
+        private Dictionary<ulong, IDiscordPlayer> Players;
+        private ILogger<ConnectionManager> _logger;
+        public ConnectionManager(ILogger<ConnectionManager> logger)
         {
             EndPoints = new IPEndPoint[10]; //max 10 connections for testing purposes
-            Players = serverPlayersMap;
+            Players = Globals.serverPlayersMap;
         }
 
         public void Start()
@@ -41,7 +50,7 @@ namespace BotPollo.UDP
                 }
                 catch (Exception ex)
                 {
-                    Logger.Console_Log($"There was a connection error with: {iPEndPoint.Address}:{iPEndPoint.Port}", LogLevel.Error);
+                    _logger.LogError($"There was a connection error with: {iPEndPoint.Address}:{iPEndPoint.Port}", iPEndPoint);
                 }
             }
         }

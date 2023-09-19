@@ -1,23 +1,24 @@
-﻿using BotPollo.Logging;
+﻿using BotPollo.Core;
 using Discord;
 using Discord.Net;
 using Discord.WebSocket;
-using MongoDB.Bson;
-using MongoDB.Bson.IO;
-using MongoWrapper.MongoCore;
-using Newtonsoft.Json;
-using System.Buffers.Text;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Reflection;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace BotPollo.Attributes
 {
-    class Setup
+    class CommandManager : ICommandManager
     {
-        private static Dictionary<string, MethodInfo> CommandMap = new Dictionary<string, MethodInfo>();
-        public static void RegisterCommands<T>()
+        private readonly ILogger<CommandManager> _logger;
+        private Dictionary<string, MethodInfo> commandMap = new Dictionary<string, MethodInfo>();
+
+        public CommandManager(ILogger<CommandManager> logger)
+        {
+            _logger = logger;
+        }
+
+        public void RegisterCommands<T>()
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
@@ -26,14 +27,14 @@ namespace BotPollo.Attributes
             foreach (MethodInfo mi in types)
             {
                 Console.ForegroundColor = ConsoleColor.Green;
-                Logger.Console_Log("Command: " + ((Command)mi.GetCustomAttribute(typeof(Command))).Name + " binded to method: " + mi.Name,LogLevel.Trace);
+                _logger.LogInformation("Command: " + ((Command)mi.GetCustomAttribute(typeof(Command))).Name + " binded to method: " + mi.Name);
                 var aliases = ((Command)mi.GetCustomAttribute(typeof(Command))).aliases;
                 foreach(string alias in aliases)
                 {
-                    CommandMap.Add(alias, mi);
-                    Logger.Console_Log("Alias: " + alias + " binded to method: " + mi.Name, LogLevel.Trace);
+                    commandMap.Add(alias, mi);
+                    _logger.LogInformation("Alias: " + alias + " binded to method: " + mi.Name);
                 }
-                CommandMap.Add(((Command)mi.GetCustomAttribute(typeof(Command))).Name.ToLower(), mi);
+                commandMap.Add(((Command)mi.GetCustomAttribute(typeof(Command))).Name.ToLower(), mi);
 
                 try
                 {
@@ -50,18 +51,18 @@ namespace BotPollo.Attributes
                 }
                 catch (ApplicationCommandException exception)
                 {
-                    Logger.Console_Log("Error registering slash command", LogLevel.Error);
+                    _logger.LogError("Error registering slash command");
                 }
             }
 
-            foreach(KeyValuePair<string, MethodInfo> kvp in CommandMap)
+            foreach(KeyValuePair<string, MethodInfo> kvp in commandMap)
             {
-                Logger.Console_Log($"{kvp.Key} => {kvp.Value.Name}()",LogLevel.Trace);
+                _logger.LogInformation($"{kvp.Key} => {kvp.Value.Name}()");
             }
 
             sw.Stop();
 
-            Logger.Console_Log($"Setup finished in {sw.ElapsedMilliseconds}ms",LogLevel.Info);
+            _logger.LogInformation($"Setup finished in {sw.ElapsedMilliseconds}ms");
         }
 
         public static async Task UserJoinedVChannelHandlerAsync(SocketUser user, SocketVoiceState state, SocketVoiceState state2)
@@ -98,14 +99,14 @@ namespace BotPollo.Attributes
 
         }
 
-        internal static async Task Command_HandlerAsync(SocketMessage msg)
+        public async Task CommandHandler(SocketMessage msg)
         {
-            if (CommandMap.ContainsKey(msg.Content.Split(' ')[0].ToLower())) //Split serve a prendere la parte del messaggio contenente il nome del comando
+            if (commandMap.ContainsKey(msg.Content.Split(' ')[0].ToLower())) //Split serve a prendere la parte del messaggio contenente il nome del comando
             {
-                var method = CommandMap.GetValueOrDefault(msg.Content.Split(' ')[0].ToLower());
+                var method = commandMap.GetValueOrDefault(msg.Content.Split(' ')[0].ToLower());
                 method.Invoke(null, new object[] { msg });
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Logger.Console_Log("User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
+                _logger.LogInformation("User: " + msg.Author.Username + " Used command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower());
                 /*await MongoIO.InsertJSONAsync(Program.Node.GetBsonCollection("bot_logs"), new
                 {
                     user_id = msg.Author.Id,
@@ -123,17 +124,17 @@ namespace BotPollo.Attributes
             }
         }
 
-        internal static async Task SlashCommandHandlerAsync(SocketSlashCommand command)
+        public async Task SlashCommandHandler(SocketSlashCommand command)
         {
-            if (CommandMap.ContainsKey(command.CommandName)) //Split serve a prendere la parte del messaggio contenente il nome del comando
+            if (commandMap.ContainsKey(command.CommandName)) //Split serve a prendere la parte del messaggio contenente il nome del comando
             {
-                var method = CommandMap.GetValueOrDefault(command.CommandName);
-                method.Invoke(null,new object[] { command });
+                var method = commandMap.GetValueOrDefault(command.CommandName);
+                method.Invoke(null, new object[] { command });
 
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Logger.Console_Log("User: " + command.User.Username + " Used slash command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
-                Logger.Console_Log("Channel:" + command.Channel.Name + " Id:" + command.ChannelId,LogLevel.Info);
-                Logger.Console_Log("Data:" + command.Data,LogLevel.Info);
+                //Logger.Console_Log("User: " + command.User.Username + " Used slash command: " + ((Command)method.GetCustomAttribute(typeof(Command))).Name.ToLower(), LogLevel.Info);
+                //Logger.Console_Log("Channel:" + command.Channel.Name + " Id:" + command.ChannelId, LogLevel.Info);
+                //Logger.Console_Log("Data:" + command.Data, LogLevel.Info);
                 Serilog.Log.Logger.Information<SocketSlashCommand>("Command used", command);
                 List<object> objects = new List<object>();
                 foreach (var obj in command.Data.Options)
@@ -157,14 +158,21 @@ namespace BotPollo.Attributes
                         channel_id = command.Channel.Id,
                         arguments = objects.ToArray()
                     }.ToBsonDocument());*/
-                }catch(Exception ex)
+                }
+                catch (Exception ex)
                 {
-                    Logger.Console_Log(ex.Message, LogLevel.Error);
+                    _logger.LogError(ex.Message, ex);
                     Serilog.Log.Logger.Error(ex, ex.Message);
                 }
                 Console.ForegroundColor = ConsoleColor.White;
             }
         }
+    }
 
+    internal interface ICommandManager
+    {
+        public void RegisterCommands<T>();
+        public Task CommandHandler(SocketMessage message);
+        public Task SlashCommandHandler(SocketSlashCommand command);
     }
 }

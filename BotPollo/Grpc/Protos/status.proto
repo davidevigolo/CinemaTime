@@ -9,6 +9,7 @@ service Status {
 
   rpc GetStatus (StatusRequest) returns (StatusResponse);
   rpc GetCurrentSong(CurrentSongRequest) returns (CurrentSongResponse);
+  rpc GetUserGuildPlayer(UserGuildPlayerRequest) returns (UserGuildPlayerResponse);
 }
 
 message StatusRequest {
@@ -31,6 +32,14 @@ message CurrentSongResponse {
 	string author = 3;
 	double bitrate = 4;
 	repeated string thumbnailUrls = 5;
+}
+
+message UserGuildPlayerRequest {
+	uint64 user_id = 1;
+}
+
+message UserGuildPlayerResponse {
+	repeated uint64 guild_ids = 1;
 }
 
 

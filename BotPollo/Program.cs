@@ -1,12 +1,18 @@
-﻿using BotPollo.Core;
-using BotPollo.Logging;
+﻿using BotPollo.Attributes;
+using BotPollo.Core;
+using BotPollo.SignalR;
 using BotPollo.UDP;
 using BotPolloG.Grpc;
 using Discord.WebSocket;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
 using Serilog;
 using SpotifyAPI.Web;
 using System.Diagnostics;
@@ -21,13 +27,10 @@ namespace BotPollo
         public static string Token { get; private set; }
         public static DiscordSocketClient GetBot() { return DiscordClient; }
         //public static MongoNode Node { get; private set; }
-        public static SpotifyClient SpotifyClient { get; private set; }
         public static bool EnableNotifications { get; set; }
         private delegate Task ConsoleCommandAsyncCallback(string content, params string[] args);
         static void Main(string[] args)
         {
-            var builder = new ConfigurationBuilder();
-            BuildConfig(builder);
 
             Log.Logger = new LoggerConfiguration()
                 .WriteTo.Console()
@@ -43,17 +46,103 @@ namespace BotPollo
 
             Log.Logger.Information("Application starting");
 
-            var host = Host.CreateDefaultBuilder()
-                .ConfigureServices((context, services) =>
+            var builder = WebApplication.CreateBuilder();
+            //BuildConfig(builder.Configuration);
+
+            var teee = Directory.GetCurrentDirectory();
+            builder.Configuration.SetBasePath(Directory.GetCurrentDirectory());
+            builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+            var jwtSetting = builder.Configuration["Jwt:Issuer"];
+            //builder.WebHost.UseKestrel();
+
+            builder.Services.AddSingleton<IDiscordBotService, DiscordBotService>();
+            builder.Services.AddSingleton<ICommandManager, CommandManager>();
+            builder.Services.AddScoped<IDiscordPlayer, DiscordPlayer>();
+            builder.Services.AddSingleton<IConnectionManager, ConnectionManager>();
+            builder.Services.AddCors();
+            builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultSignInScheme = JwtBearerDefaults.AuthenticationScheme;
+            }).AddJwtBearer(options =>
+            {
+                options.RequireHttpsMetadata = false;
+                options.SaveToken = true;
+                options.TokenValidationParameters = new TokenValidationParameters
                 {
-                    services.AddSingleton<IDiscordBotService,DiscordBotService>();
-                })
-                .UseSerilog()
-                .Build();
+                    ValidateIssuerSigningKey = true,
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                    ValidAudience = builder.Configuration["Jwt:Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey
+                    (Convert.FromBase64String(builder.Configuration["Jwt:Key"])),
+                };
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
 
-            var svc = ActivatorUtilities.CreateInstance<IDiscordBotService>(host.Services);
 
-            svc.Run();
+                        // If the request is for our hub...
+                        var path = context.HttpContext.Request.Path;
+                        if (!string.IsNullOrEmpty(accessToken) &&
+                            (path.StartsWithSegments("/signalr")))
+                        {
+                            // Read the token out of the query string
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    }
+                };
+            });
+            builder.Services.AddAuthorization();
+            builder.Host.UseSerilog();
+            builder.Services.AddSignalR(o =>
+            {
+                o.EnableDetailedErrors = true;
+            }).AddNewtonsoftJsonProtocol(o => {
+                o.PayloadSerializerSettings.NullValueHandling = NullValueHandling.Ignore;
+                o.PayloadSerializerSettings.ReferenceLoopHandling = ReferenceLoopHandling.Serialize;
+            });
+            /*.AddJsonProtocol(configure =>
+            {
+                configure.PayloadSerializerOptions.WriteIndented = false;
+                configure.PayloadSerializerOptions.Converters.Clear();
+                configure.PayloadSerializerOptions.Converters.Add(new Newtonsoft.Json.JsonSerializer());
+            });*/
+            /*.AddMessagePackProtocol((options) =>
+            {
+                options.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithResolver(StandardResolver.Instance)
+                    .WithSecurity(MessagePackSecurity.UntrustedData);
+            });*/
+
+            Globals.app = builder.Build();
+            var webAppRef = Globals.app as WebApplication;
+            
+            webAppRef.UseCors(builder =>
+            {
+                builder.WithOrigins("http://127.0.0.1:5500")
+                       .AllowAnyMethod()
+                       .AllowAnyHeader()
+                       .AllowCredentials();
+            });
+            //webAppRef.UseAuthentication();
+            //webAppRef.UseAuthorization();
+            //webAppRef.UseHttpsRedirection();
+            webAppRef.Urls.Add("http://localhost:5000/");
+            webAppRef.MapHub<PlayerHub>("/signalr");
+            var svc = Globals.app.Services.GetService<IDiscordBotService>();
+
+            Task.Run(() =>
+            {
+                svc.Run();
+            });
+
+            Globals.app.Run();
         }
         static void BuildConfig(IConfigurationBuilder configurationBuilder)
         {
@@ -63,7 +152,7 @@ namespace BotPollo
                 .AddEnvironmentVariables()
                 .Build();
         }
-        public async Task MainAsync(string[] args)
+        /*public async Task MainAsync(string[] args)
         {
             try
             {
@@ -76,7 +165,7 @@ namespace BotPollo
                 string dbName = "cinematime";
                 /*Node = new MongoNode("mongodb://localhost", dbName);
                 Node.Log += (string message) => { Logger.Console_Log(message, LogLevel.Database); };
-                Node.Connect();*/
+                Node.Connect();
                 EnableNotifications = true;
 
                 #region grpcsetup
@@ -94,7 +183,7 @@ namespace BotPollo
                 client.UserVoiceStateUpdated += Attributes.Setup.UserJoinedVChannelHandlerAsync;
                 client.SlashCommandExecuted += Attributes.Setup.SlashCommandHandlerAsync;
                 client.ButtonExecuted += Commands.HandleButtonInteractionAsync;
-                client.Ready += async () => { Attributes.Setup.RegisterCommands(new Commands()); };
+                client.Ready += async () => { Attributes.Setup.RegisterCommands<Commands>(); };
 
                 Token = File.ReadAllText("token.txt"); //It's already expired of course
                 await client.LoginAsync(Discord.TokenType.Bot, Token);
@@ -136,7 +225,7 @@ namespace BotPollo
             {
                 Log.Logger.Fatal("Invalid Discord token.");
             }
-        }
+        }*/
 
         private async Task WaitForCommandAsync(ConsoleCommandAsyncCallback callback)
         {
@@ -165,7 +254,7 @@ namespace BotPollo
             if(name == "stop")
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Logger.Console_Log("Shutting down bot...",LogLevel.Info);
+                Log.Logger.Information("Shutting down bot...");
                 Console.ForegroundColor = ConsoleColor.White;
                 await DiscordClient.StopAsync();
                 Environment.Exit(0);
@@ -175,23 +264,23 @@ namespace BotPollo
             if(name == "disconnect" && DiscordClient.ConnectionState != Discord.ConnectionState.Disconnected)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Logger.Console_Log("Disconnecting bot...",LogLevel.Warning);
+                Log.Logger.Warning("Disconnecting bot...");
                 Console.ForegroundColor = ConsoleColor.White;
                 await DiscordClient.StopAsync();
-                Commands.serverPlayersMap.Clear();
-                Logger.Console_Log("Bot is now OFFLINE, type connect to turn it back ONLINE", LogLevel.Warning);
+                Globals.serverPlayersMap.Clear();
+                Log.Logger.Information("Bot is now OFFLINE, type connect to turn it back ONLINE");
             }
             else if (name == "disconnect")
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Logger.Console_Log("Bot is already OFFLINE", LogLevel.Error);
+                Log.Logger.Warning("Bot is already OFFLINE");
                 Console.ForegroundColor = ConsoleColor.White;
             }
 
             if(name == "reconnect" && DiscordClient.ConnectionState != Discord.ConnectionState.Connected)
             {
                 Console.ForegroundColor = ConsoleColor.Blue;
-                Logger.Console_Log("Reconnecting bot...", LogLevel.Info);
+                Log.Logger.Information("Reconnecting bot...");
                 Console.ForegroundColor = ConsoleColor.White;
                 await DiscordClient.LoginAsync(Discord.TokenType.Bot,Token);
                 await DiscordClient.StartAsync();
@@ -200,7 +289,7 @@ namespace BotPollo
             else if(name == "reconnect")
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Logger.Console_Log("Bot is already ONLINE", LogLevel.Error);
+                Log.Logger.Warning("Bot is already ONLINE");
                 Console.ForegroundColor = ConsoleColor.White;
             }
 
@@ -208,13 +297,13 @@ namespace BotPollo
             {
                 EnableNotifications = !EnableNotifications;
                 string s = EnableNotifications ? "on" : "off";
-                Logger.Console_Log($"Notifications have been turned {s}",LogLevel.Trace);
+                Log.Logger.Information($"Notifications have been turned {s}");
             }
             if(name == "pollo")
             {
                 for(int i = 0; i < 20; i++)
                 {
-                    Logger.Console_Log($"PUNTIIIII",LogLevel.All);
+                    Log.Logger.Information($"PUNTIIIII");
                 }
             }
             if(name == "triplipunti")
@@ -229,27 +318,30 @@ namespace BotPollo
             if(name == "serverlist")
             {
 
-                Logger.Console_Log("Servers active:", LogLevel.Info);
+                Log.Logger.Information("Servers active:");
                 foreach (var guild in DiscordClient.Guilds)
                 {
-                    Logger.Console_Log($"{guild.Name} - {guild.MemberCount} Users - {guild.PremiumTier.ToString()}", LogLevel.Info);
+                    Log.Logger.Information($"{guild.Name} - {guild.MemberCount} Users - {guild.PremiumTier.ToString()}");
                 }
             }
         }
 
-        class DiscordBotService : IDiscordBotService
+        public class DiscordBotService : IDiscordBotService
         {
             private readonly ILogger<DiscordBotService> _logger;
             private readonly IConfiguration _conf;
+            private readonly IServiceProvider _serviceProvider;
             public DiscordBotService(ILogger<DiscordBotService> logger, IConfiguration config)
             {
                 _logger = logger;
                 _conf = config;
+                _serviceProvider = Globals.app.Services;
             }
             public async void Run()
             {
                 try
                 {
+                    #region db
                     /*if (args.Length > 0)
                     {
                         Log.Logger.Information($"Launch args: {args[0]}");
@@ -260,6 +352,7 @@ namespace BotPollo
                     /*Node = new MongoNode("mongodb://localhost", dbName);
                     Node.Log += (string message) => { Logger.Console_Log(message, LogLevel.Database); };
                     Node.Connect();*/
+                    #endregion
                     EnableNotifications = true;
 
                     #region grpcsetup
@@ -271,13 +364,15 @@ namespace BotPollo
                     DiscordSocketConfig dSocketConfig = new DiscordSocketConfig();
                     dSocketConfig.GatewayIntents = Discord.GatewayIntents.MessageContent | Discord.GatewayIntents.All;
                     var client = new DiscordSocketClient(dSocketConfig);
+                    var service = _serviceProvider.GetService<ICommandManager>();
 
-                    client.Log += Logging.Logger.Client_LogAsync;
-                    client.MessageReceived += Attributes.Setup.Command_HandlerAsync;
-                    client.UserVoiceStateUpdated += Attributes.Setup.UserJoinedVChannelHandlerAsync;
-                    client.SlashCommandExecuted += Attributes.Setup.SlashCommandHandlerAsync;
-                    client.ButtonExecuted += Commands.HandleButtonInteractionAsync;
-                    client.Ready += async () => { Attributes.Setup.RegisterCommands<Commands>(); };
+                    client.SlashCommandExecuted += service.SlashCommandHandler;
+                    client.Log += Client_Log;
+                    client.UserVoiceStateUpdated += Attributes.CommandManager.UserJoinedVChannelHandlerAsync;
+                    client.ButtonExecuted += Commands.HandleButtonInteractionAsync; //Add to ICommandManager
+                    client.Ready += async () => {
+                        service.RegisterCommands<Commands>();
+                    };
 
                     Token = File.ReadAllText("token.txt"); //It's already expired of course
                     await client.LoginAsync(Discord.TokenType.Bot, Token);
@@ -287,20 +382,17 @@ namespace BotPollo
                     //Spotify
 
                     var config = SpotifyClientConfig.CreateDefault().WithAuthenticator(new ClientCredentialsAuthenticator("5b60c795a9874f5b943362f0020b47d4", "99516aca0c26435398e543831e0c7113"));
-
-                    SpotifyClient = new SpotifyClient(config);
+                    Globals.spotifyClient = new SpotifyClient(config);
 
                     //SpotifyEnd
 
                     Log.Logger.Information("Starting Api server...");
                     Thread t = new Thread(() =>
                     {
-                        ConnectionManager cm = new ConnectionManager(Commands.serverPlayersMap);
+                        IConnectionManager cm = Globals.app.Services.GetRequiredService<IConnectionManager>();
                         cm.Start();
-
                     });
                     t.Start();
-
                     Log.Logger.Information("Api server started succesfully");
 
                     //Disconnecting bot from voice channels to prevent errors with DiscordPlayer
@@ -319,6 +411,11 @@ namespace BotPollo
                 {
                     Log.Logger.Fatal("Invalid Discord token.");
                 }
+            }
+
+            private async Task Client_Log(Discord.LogMessage arg)
+            {
+                Log.Logger.Information(arg.Message,arg);
             }
         }
     }

@@ -3,16 +3,17 @@ using BotPollo.Core.Exceptions;
 using Discord;
 using Discord.Rest;
 using Discord.WebSocket;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System.Net;
 using static BotPollo.Core.DiscordPlayer;
 
 namespace BotPollo.Core
 {
-    public class Commands : ICommandService
+    public class Commands : ICommandModule
     {
-        public static Dictionary<ulong, DiscordPlayer> serverPlayersMap = new Dictionary<ulong, DiscordPlayer>();
-        private static readonly ILogger _logger;
+        private static ILogger _logger;
+
 
         [Command("ping")]
         public static async Task CheckPunti(SocketMessage msg)
@@ -95,7 +96,7 @@ namespace BotPollo.Core
         [Command("disconnect")]
         public static async Task Disconnect(SocketSlashCommand ssc)
         {
-            DiscordPlayer player = serverPlayersMap[(ulong)ssc.GuildId];
+            IDiscordPlayer player = Globals.serverPlayersMap[(ulong)ssc.GuildId];
             player.Dispose();
         }
 
@@ -107,7 +108,7 @@ namespace BotPollo.Core
             {
                 if (await AssertUserInSameVChannel(ssc))
                 {
-                    DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
+                    IDiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
                     player.Skip();
                     await ssc.FollowupAsync("Song skipped!", ephemeral: true);
                     await Task.Run(() =>
@@ -126,7 +127,7 @@ namespace BotPollo.Core
         public static async Task Time(SocketSlashCommand ssc)
         {
             await ssc.DeferAsync();
-            DiscordPlayer player = serverPlayersMap[(ulong)ssc.GuildId];
+            IDiscordPlayer player = Globals.serverPlayersMap[(ulong)ssc.GuildId];
             if (!player.isPlaying)
             {
                 await ssc.RespondAsync("The bot isn't playing any song at the moment or it is not connected at all");
@@ -212,13 +213,15 @@ namespace BotPollo.Core
             {
                 IVoiceChannel voiceChannel = (ssc.User as IGuildUser).VoiceChannel;
 
-                if (!serverPlayersMap.ContainsKey(voiceChannel.GuildId))
+                if (!Globals.serverPlayersMap.ContainsKey(voiceChannel.GuildId))
                 {
                     try
                     {
                         var audioClient = await voiceChannel.ConnectAsync(); //Inserisci handling delle troppe persone nel canale
-                        DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel,Program.SpotifyClient,_logger);
-                        serverPlayersMap.Add(voiceChannel.GuildId, player);
+                        //var playerService = Globals.app.Services.GetRequiredService<IDiscordPlayer>();
+                        DiscordPlayer player = ActivatorUtilities.CreateInstance(Globals.app.Services, typeof(DiscordPlayer), audioClient, ssc.Channel as IMessageChannel, voiceChannel, Globals.spotifyClient) as DiscordPlayer;
+                        //DiscordPlayer player = new DiscordPlayer(audioClient, ssc.Channel as IMessageChannel, voiceChannel);
+                        Globals.serverPlayersMap.Add(voiceChannel.GuildId, player);
                         player.NewSongPlaying += Player_NewSongPlaying; //SISTEMA EVENTI CHE NON TRIGGERANO
                         player.SongAdded += Player_SongAdded;
                         player.PlaylistAdded += Player_PlaylistAdded;
@@ -233,7 +236,7 @@ namespace BotPollo.Core
                 {
                     if (await AssertUserInSameVChannel(ssc))
                     {
-                        DiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
+                        IDiscordPlayer player = await GetServerDiscordPlayer((ssc.User as IGuildUser).GuildId);
                         var res = await player.AddSongAsync(q);
                         if (!res)
                         {
@@ -259,7 +262,7 @@ namespace BotPollo.Core
         }
         private static void Player_PlayerDestroyed(ulong guildId)
         {
-            serverPlayersMap.Remove(guildId);
+            Globals.serverPlayersMap.Remove(guildId);
             Logging.Logger.Console_Log($"Player {guildId} has been disposed", Logging.LogLevel.Info);
         }
 
@@ -278,7 +281,7 @@ namespace BotPollo.Core
             {
                 if (await AssertUserInSameVChannel(ssc))
                 {
-                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    IDiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
                     await player.SeekAsync(inSec);
                     await ssc.FollowupAsync("Track resuming at: " + inSec.ToString(),ephemeral: true);
                     await Task.Run(() =>
@@ -306,7 +309,7 @@ namespace BotPollo.Core
             {
                 if (await AssertUserInSameVChannel(ssc))
                 {
-                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    IDiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
                     await player.SetSpeedAsync(speed);
                     return;
                 }
@@ -327,7 +330,7 @@ namespace BotPollo.Core
             {
                 if (await AssertUserInSameVChannel(ssc))
                 {
-                    DiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
+                    IDiscordPlayer player = await GetServerDiscordPlayer((ulong)ssc.GuildId);
                     await player.ChangePitchAsync(arg);
                     await ssc.FollowupAsync("Pitch changed!");
                     await ssc.DeleteOriginalResponseAsync();
@@ -340,9 +343,27 @@ namespace BotPollo.Core
                 await ssc.FollowupAsync("The bot isn't connected on this server at the moment",ephemeral: true);
             }
         }
+        [Command("pause")]
+        public async static Task Player_Pause(SocketSlashCommand ssc)
+        {
+            if (ssc.GuildId is null) ssc.RespondAsync("You need to execute this command in a guild");
+            var player = Globals.serverPlayersMap[(ulong)ssc.GuildId];
+            player.Pause();
+            await ssc.RespondAsync();
+            await ssc.DeleteOriginalResponseAsync();
+        }
+        [Command("resume")]
+        public async static Task Player_Resume(SocketSlashCommand ssc)
+        {
+            if (ssc.GuildId is null) ssc.RespondAsync("You need to execute this command in a guild");
+            var player = Globals.serverPlayersMap[(ulong)ssc.GuildId];
+            player.Resume();
+            await ssc.RespondAsync();
+            await ssc.DeleteOriginalResponseAsync();
+        }
         private async static void Player_SongAdded(string name, IMessageChannel commandChannel, DiscordPlayer dp)
         {
-            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var guildId = Globals.serverPlayersMap.First(x => x.Value == dp).Key;
             var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
             var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
 
@@ -372,7 +393,7 @@ namespace BotPollo.Core
 
         private async static void Player_NewSongPlaying(string name, IMessageChannel commandChannel, DiscordPlayer dp)
         {
-            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var guildId = Globals.serverPlayersMap.First(x => x.Value == dp).Key;
             var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
             var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
 
@@ -412,7 +433,7 @@ namespace BotPollo.Core
         }
         private async static void Player_PlaylistAdded(string[] names, IMessageChannel commandChannel, DiscordPlayer dp)
         {
-            var guildId = serverPlayersMap.First(x => x.Value == dp).Key;
+            var guildId = Globals.serverPlayersMap.First(x => x.Value == dp).Key;
             var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;
             var url = dp.CurrentQueueObject.VideoInfo.Thumbnails.FirstOrDefault().Url;
 
@@ -470,9 +491,9 @@ namespace BotPollo.Core
         {
             IGuildUser sender = (IGuildUser)msg.Author;
             IGuildChannel channel = (IGuildChannel)msg.Channel;
-            if (serverPlayersMap.ContainsKey(channel.GuildId))
+            if (Globals.serverPlayersMap.ContainsKey(channel.GuildId))
             {
-                var usersInVoiceChannel = await serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
+                var usersInVoiceChannel = await Globals.serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
                 if (usersInVoiceChannel == null)
                     return false;
                 return true;
@@ -484,9 +505,9 @@ namespace BotPollo.Core
         {
             IGuildUser sender = (IGuildUser)ssc.User;
             IGuildChannel channel = (IGuildChannel)ssc.Channel;
-            if (serverPlayersMap.ContainsKey(channel.GuildId))
+            if (Globals.serverPlayersMap.ContainsKey(channel.GuildId))
             {
-                var usersInVoiceChannel = await serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
+                var usersInVoiceChannel = await Globals.serverPlayersMap.GetValueOrDefault(channel.GuildId).AudioChannel.GetUserAsync(sender.Id);
                 if (usersInVoiceChannel == null)
                     return false;
                 return true;
@@ -499,38 +520,38 @@ namespace BotPollo.Core
             switch(smc.Data.CustomId)
             {
                 case "1":
-                    var player = serverPlayersMap[(ulong)smc.GuildId];
+                    var player = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player.ChangeFiltersAsync(0);
                     await smc.RespondAsync();
                     break;
                 case "2":
-                    var player2 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player2 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player2.ChangeFiltersAsync(1);
                     await smc.RespondAsync();
                     break;
                 case "3":
-                    var player3 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player3 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player3.ChangeFiltersAsync(2);
                     await smc.RespondAsync();
                     break;
                 case "4":
-                    var player4 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player4 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player4.ChangeFiltersAsync(3);
                     await smc.RespondAsync();
                     break;
                 case "5":
-                    var player5 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player5 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player5.ChangeFiltersAsync(4);
                     await smc.RespondAsync();
                     break;
                 case "6":
-                    var player6 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player6 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     player6.ChangeFiltersAsync(5);
                     await smc.RespondAsync();
                     break;
                 case "100":
                     await smc.DeferAsync();
-                    var player100 = serverPlayersMap[(ulong)smc.GuildId];
+                    var player100 = Globals.serverPlayersMap[(ulong)smc.GuildId];
                     try
                     {
                         string lyrics = await player100.GetLyrics();
@@ -543,10 +564,10 @@ namespace BotPollo.Core
                     break;
             }
         } 
-        public static async Task<DiscordPlayer> GetServerDiscordPlayer(ulong guildId) => serverPlayersMap.GetValueOrDefault(guildId);
+        public static async Task<IDiscordPlayer> GetServerDiscordPlayer(ulong guildId) => Globals.serverPlayersMap.GetValueOrDefault(guildId);
     }
 
-    public interface ICommandService
+    public interface ICommandModule
     {
         //Free for future implementation
     }

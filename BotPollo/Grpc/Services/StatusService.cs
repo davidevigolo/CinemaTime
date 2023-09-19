@@ -1,7 +1,9 @@
+using BotPollo.Attributes;
 using BotPollo.Core;
 using BotPollo.Logging;
 using Grpc.Core;
 using Microsoft.Extensions.Logging;
+using System.Configuration;
 
 namespace BotPollo.Grpc.Services
 {
@@ -12,10 +14,10 @@ namespace BotPollo.Grpc.Services
 
         }
 
-        public async override Task<StatusResponse> GetStatus(StatusRequest request, ServerCallContext context)
+        public override async Task<StatusResponse> GetStatus(StatusRequest request, ServerCallContext context)
         {
             ulong guildId = request.GuildId;
-            var player = Commands.serverPlayersMap[guildId];
+            var player = Globals.serverPlayersMap[guildId];
             if (player == null)
             {
                 return null;
@@ -29,10 +31,10 @@ namespace BotPollo.Grpc.Services
             };
         }
 
-        public async override Task<CurrentSongResponse> GetCurrentSong(CurrentSongRequest request, ServerCallContext context)
+        public override async Task<CurrentSongResponse> GetCurrentSong(CurrentSongRequest request, ServerCallContext context)
         {
             ulong guildId = request.GuildId;
-            DiscordPlayer player = Commands.serverPlayersMap[guildId];
+            IDiscordPlayer player = Globals.serverPlayersMap[guildId];
             if (player == null)
             {
                 return null;
@@ -54,6 +56,24 @@ namespace BotPollo.Grpc.Services
             }
 
             return result;
+        }
+        public override async Task<UserGuildPlayerResponse> GetUserGuildPlayer(UserGuildPlayerRequest request, ServerCallContext context)
+        {
+            ulong user_id = request.UserId;
+            ulong[] players = Globals.serverPlayersMap.Where(z =>
+            {
+                var guildId = z.Value.AudioChannel.GuildId;
+                if (!Globals.serverPlayersMap.ContainsKey(guildId)) return false;
+                var audioChannel = z.Value.AudioChannel;
+                if (audioChannel == null || z.Value.AudioClient.ConnectionState != Discord.ConnectionState.Connected) return false;
+                return true;
+
+            }).Select(z => z.Value.AudioChannel.GuildId).ToArray();
+
+            var result = new UserGuildPlayerResponse();
+            result.GuildIds.Add(players);
+            return result;
+
         }
     }
 }

@@ -1,12 +1,14 @@
 ﻿using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using BotPollo.Logging;
+using BotPollo.SignalR;
 using Discord;
 using Discord.Audio;
 using DnsClient.Internal;
 using Genius;
 using Genius.Models;
 using Genius.Models.Response;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using RestSharp;
 using SpotifyAPI.Web;
@@ -19,11 +21,42 @@ using TimeSpan = System.TimeSpan;
 
 namespace BotPollo.Core
 {
-    public class DiscordPlayer : FFmpegPlayer,IDisposable
+    public interface IDiscordPlayer
     {
-        public delegate void SongAddedToQueue(string name,IMessageChannel commandChannel,DiscordPlayer sender); //Command channel serve per passarlo poi agli event handler che non ce l'hanno nello scope
+        IVoiceChannel AudioChannel { get; }
+        IAudioClient AudioClient { get; }
+        DiscordPlayer.QueueObject CurrentQueueObject { get; }
+        IMessageChannel GuildCommandChannel { get; }
+        bool isPlaying { get; }
+        IUserMessage LyricsMessage { get; set; }
+        IUserMessage PlayerMessage { get; }
+        Queue SongQueue { get; }
+
+        event DiscordPlayer.PlaylistNowPlaying NewPlaylistPlaying;
+        event DiscordPlayer.SongNowPlaying NewSongPlaying;
+        event DiscordPlayer.PlayerDisposed PlayerDestroyed;
+        event DiscordPlayer.PlaylistAddedToQueue PlaylistAdded;
+        event DiscordPlayer.SongAddedToQueue SongAdded;
+
+        Task<bool> AddSongAsync(string query);
+        Task<bool> ChangeFiltersAsync(int param);
+        Task<bool> ChangePitchAsync(string factor);
+        void Dispose();
+        Task<string> GetLyrics();
+        TimeSpan GetTime();
+        bool HasChannelMessage();
+        Task<bool> SeekAsync(TimeSpan timespan);
+        Task<bool> SetSpeedAsync(double multiplier);
+        void Pause();
+        void Resume();
+        bool Skip();
+    }
+
+    public class DiscordPlayer : FFmpegPlayer, IDisposable, IDiscordPlayer
+    {
+        public delegate void SongAddedToQueue(string name, IMessageChannel commandChannel, DiscordPlayer sender); //Command channel serve per passarlo poi agli event handler che non ce l'hanno nello scope
         public delegate void SongNowPlaying(string name, IMessageChannel commandChannel, DiscordPlayer sender);
-        public delegate void PlaylistAddedToQueue(string[] names, IMessageChannel commandChannel,DiscordPlayer sender);
+        public delegate void PlaylistAddedToQueue(string[] names, IMessageChannel commandChannel, DiscordPlayer sender);
         public delegate void PlaylistNowPlaying(string[] names, IMessageChannel commandChannel, DiscordPlayer sender);
         public delegate void PlayerDisposed(ulong guildId);
         public event SongAddedToQueue SongAdded;
@@ -40,12 +73,12 @@ namespace BotPollo.Core
         public IMessageChannel GuildCommandChannel { get; private set; }
         public QueueObject CurrentQueueObject { get; private set; }
         private System.Timers.Timer AFKTimer;
-        private object eventSynchronization = new object();
-        public IUserMessage PlayerMessage { get; internal set; } //To keep UI cleaner in discord channels
-        public IUserMessage LyricsMessage { get; internal set; } //Delete lyrics after playback ended
+        public IUserMessage PlayerMessage { get; set; } //To keep UI cleaner in discord channels
+        public IUserMessage LyricsMessage { get; set; } //Delete lyrics after playback ended
         private bool manualInterruption = false; //Usato per quando viene ricreata la stream che parte da un'altro punto, per non eseguire PlayBackEnded e passare alla prossima canzone
         private SemaphoreSlim QueueSemaphore;
-        private Microsoft.Extensions.Logging.ILogger logger;
+        private ILogger<DiscordPlayer> logger;
+        private IHubContext<PlayerHub> hubContext;
         public struct QueueObject
         {
             internal IStreamInfo StreamInfo { get; set; }
@@ -53,7 +86,7 @@ namespace BotPollo.Core
             internal string UserQuery { get; set; }
         }
 
-        public DiscordPlayer(IAudioClient audioClient,IMessageChannel commandChannel, IVoiceChannel audioChannel, SpotifyClient spotifyClient, Microsoft.Extensions.Logging.ILogger logger)
+        public DiscordPlayer(Microsoft.Extensions.Logging.ILogger<DiscordPlayer> logger, IAudioClient audioClient, IMessageChannel commandChannel, IVoiceChannel audioChannel,IHubContext<PlayerHub> hubContext, SpotifyClient spotifyClient)
         {
             PlaybackStarted += PlaybackStartedHandler;
             PlaybackEnded += PlaybackEndedHandlerAsync;
@@ -69,6 +102,7 @@ namespace BotPollo.Core
             QueueSemaphore = new SemaphoreSlim(1);
             this.spotifyClient = spotifyClient;
             this.logger = logger;
+            this.hubContext = hubContext;
 
             //ulong serverId = (commandChannel as IGuildChannel).Guild.Id;
             //MMF = MemoryMappedFile.CreateNew(serverId.ToString(), MMF_MAX_SIZE);
@@ -147,7 +181,7 @@ namespace BotPollo.Core
         }
         private async Task ResetAFKTimerAsync()
         {
-            lock (eventSynchronization)
+            /*lock (eventSynchronization)
             {
                 AFKTimer.Elapsed -= AFKTimer_Elapsed;
                 AFKTimer = new System.Timers.Timer();
@@ -155,7 +189,7 @@ namespace BotPollo.Core
                 AFKTimer.Elapsed += AFKTimer_Elapsed;
                 AFKTimer.Enabled = false;
                 AFKTimer.AutoReset = false;
-            }
+            }*/
         }
 
         //public async Task<bool> AddSongAsync(string path)
@@ -191,14 +225,14 @@ namespace BotPollo.Core
             bool isPlaylist = false;
             ServiceName service = ServiceName.Youtube;
 
-            if (query.Contains("https://open.spotify.com"))        
+            if (query.Contains("https://open.spotify.com"))
             {
                 service = ServiceName.Spotify;
                 if (query.Contains("playlist"))
                 {
                     isPlaylist = true;
                     var index = query.IndexOf("playlist/") + "playlist/".Length;
-                    query = query.Substring(index,22);
+                    query = query.Substring(index, 22);
                 }
                 else
                 {
@@ -214,7 +248,7 @@ namespace BotPollo.Core
                     query += track.Name;
                 }
             }
-            if (query.Contains("youtube.com") )
+            if (query.Contains("youtube.com"))
             {
                 service = ServiceName.Youtube;
                 if (query.Contains("list="))
@@ -249,7 +283,7 @@ namespace BotPollo.Core
                         }
                         break;
                     case ServiceName.Spotify:
-                        if(isPlaylist)
+                        if (isPlaylist)
                         {
                             var playlist = await spotifyClient.Playlists.Get(query);
                             List<IVideo> videos = new List<IVideo>();
@@ -257,10 +291,10 @@ namespace BotPollo.Core
                             for (int i = 0; i < playlist.Tracks.Total; i++)
                             {
                                 var track = playlist.Tracks.Items[i];
-                                if(track.Track is FullTrack fullTrack)
+                                if (track.Track is FullTrack fullTrack)
                                 {
                                     string tempQuery = "";
-                                    foreach(var artist in fullTrack.Artists)
+                                    foreach (var artist in fullTrack.Artists)
                                     {
                                         tempQuery += artist.Name;
                                         tempQuery += ",";
@@ -285,11 +319,13 @@ namespace BotPollo.Core
 
 
 
-            }catch (ArgumentException ex)
+            }
+            catch (ArgumentException ex)
             {
                 logger.LogError(ex.Message);
                 return false;
-            }catch (InvalidOperationException ex)
+            }
+            catch (InvalidOperationException ex)
             {
                 logger.LogError(ex.Message);
                 return false;
@@ -314,6 +350,7 @@ namespace BotPollo.Core
         }
         private async Task<int> AddSong(IVideo video, string query, YoutubeClient client)
         {
+            var task = hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("ReceiveMessage", $"Added song {video.Title}");
             var streamInfo = await GetStreamInfo(video.Id, client);
             var stream = await client.Videos.Streams.GetAsync(streamInfo);
             int bitrate = AudioChannel.Bitrate;
@@ -327,6 +364,8 @@ namespace BotPollo.Core
                     UserQuery = query
                 };
                 SongQueue.Enqueue(container);
+                await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("QueueUpdate", SongQueue.ToArray());
+                await task;
                 return 1;
                 //SongAdded($"[{video.Title}]({video.Url})", guildCommandChannel, this);
             }
@@ -340,6 +379,8 @@ namespace BotPollo.Core
                 };
                 CurrentOperation = SetYoutubeStreamAsync(stream, clientOutStream, streamInfo, bitrate);
                 isPlaying = true; //This is set to true previously to avoid multiple NewSongPlaying events being fired on multiple songs
+                await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("QueueUpdate", SongQueue.ToArray());
+                await task;
                 return 0;
                 //NewSongPlaying($"[{video.Title}]({video.Url})", guildCommandChannel, this);
             }
@@ -385,7 +426,7 @@ namespace BotPollo.Core
             Stream originalStream = new MemoryStream();
             CurrentYoutubeSourceStream.Position = 0; //This is null when seeking with no song playing
             byte[] buffer = new byte[4096];
-            while(CurrentYoutubeSourceStream.Position < CurrentYoutubeSourceStream.Length)
+            while (CurrentYoutubeSourceStream.Position < CurrentYoutubeSourceStream.Length)
             {
                 int readBytes = CurrentYoutubeSourceStream.Read(buffer, 0, buffer.Length);
                 if (readBytes == 0) break;
@@ -461,7 +502,7 @@ namespace BotPollo.Core
                     additionalFilters = "lowpass=f=100";
                     break;
             }
-            if(additionalFilters != "")
+            if (additionalFilters != "")
                 eqParamsString += "," + additionalFilters + "\"";
             else
                 eqParamsString += "\"";
@@ -485,7 +526,7 @@ namespace BotPollo.Core
 
             await CurrentOperation; //awaits for the previous stream to receive the token cancellation notification and stop completely. This avoids overlapping of two streams due to manualInterruption being already set to false when executing PlaybackHandlerAsync()
 
-            CurrentOperation = SetStreamEqAsync(eqParamsString,GetTime(),originalStream,clientOutStream,AudioChannel.Bitrate);
+            CurrentOperation = SetStreamEqAsync(eqParamsString, GetTime(), originalStream, clientOutStream, AudioChannel.Bitrate);
 
             manualInterruption = false;
             return true;
@@ -498,9 +539,9 @@ namespace BotPollo.Core
             GeniusClient client = new GeniusClient(apiKey);
             Genius.Models.Response.SearchResponse response = await client.SearchClient.Search(CurrentQueueObject.UserQuery);
             SearchHit hit = response.Response.Hits.FirstOrDefault();
-            if (hit == null) 
+            if (hit == null)
             {
-                throw new ArgumentException("Not found");  
+                throw new ArgumentException("Not found");
             }
             SongResponse songResponse = await client.SongClient.GetSong(hit.Result.Id);
             string url = songResponse.Response.Song.Url;
@@ -515,7 +556,7 @@ namespace BotPollo.Core
             var parsedPage = parser.ParseDocument(lyrics);
             var lyricsResult = parsedPage.QuerySelectorAll("div[data-lyrics-container]");
             string res = "";
-            foreach(var lyricsItem in lyricsResult)
+            foreach (var lyricsItem in lyricsResult)
             {
                 RemoveAllTagsExceptBr(lyricsItem);
                 var temp = lyricsItem.InnerHtml;
@@ -580,6 +621,7 @@ namespace BotPollo.Core
         {
             isPlaying = true;
             await ResetAFKTimerAsync();
+            await PlayerUpdate(); //It is better to update the player here to have better sync with the web interface (In case of exception playing the song this won't be executed (this is the correct behaviour))
             /*Task.Run(async () =>
             {
                 while (true)
@@ -592,29 +634,31 @@ namespace BotPollo.Core
 
         private async void PlaybackEndedHandlerAsync()
         {
-            if(!manualInterruption)
+            if (!manualInterruption)
             {
                 if (SongQueue.Count > 0)
                 {
                     var youtube = new YoutubeClient();
                     QueueObject entry = (QueueObject)SongQueue.Dequeue();
                     var stream = await youtube.Videos.Streams.GetAsync(entry.StreamInfo);
+                    isPlaying = false;
+                    PlayerUpdate(); //This will update the isPlaying status on web clients but won't set the next song until it is actually played successfully (see PlaybackStarted handler)
                     CurrentOperation = SetYoutubeStreamAsync(stream, clientOutStream, (AudioOnlyStreamInfo)entry.StreamInfo, AudioChannel.Bitrate);
                     CurrentQueueObject = entry;
                     if (LyricsMessage != null)
                     {
                         await LyricsMessage.DeleteAsync();
                     }
-                    NewSongPlaying($"[{entry.VideoInfo.Title}]({entry.VideoInfo.Url})", GuildCommandChannel, this);
                     return;
                 }
                 else
                 {
                     AFKTimer.Enabled = true;
                     AFKTimer.AutoReset = false;
+                    isPlaying = false;
+                    PlayerUpdate();
                 }
             }
-            isPlaying = manualInterruption ? true : false;
         }
 
         public bool HasChannelMessage()
@@ -622,6 +666,41 @@ namespace BotPollo.Core
             return PlayerMessage != null;
         }
 
+        public override async void Pause()
+        {
+            base.Pause();
+            isPlaying = false;
+            await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("PlayerUpdate", GetPlayerStatus());
+        }
+        public override async void Resume()
+        {
+            base.Resume();
+            isPlaying = true;
+            await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("PlayerUpdate", GetPlayerStatus());
+        }
+
+        private struct PlayerStatus
+        {
+            public bool isPlaying;
+            public TimeSpan position;
+            public QueueObject currentSong;
+        }
+
+        private PlayerStatus GetPlayerStatus()
+        {
+            return new PlayerStatus
+            {
+                isPlaying = this.isPlaying,
+                position = GetTime(),
+                currentSong = CurrentQueueObject
+            };
+        }
+
+        private async Task PlayerUpdate()
+        {
+            var temp = GetPlayerStatus();
+            await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("PlayerUpdate", GetPlayerStatus());
+        }
 
         //MAPPED FILE STUFF
 
