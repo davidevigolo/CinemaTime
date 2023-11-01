@@ -361,7 +361,7 @@ namespace BotPollo.Core
             await ssc.RespondAsync();
             await ssc.DeleteOriginalResponseAsync();
         }
-        private async static void Player_SongAdded(string name, IMessageChannel commandChannel, DiscordPlayer dp)
+        private async static void Player_SongAdded(string name, IMessageChannel commandChannel, DiscordPlayer dp) //Implement message sending permissions check (discord) before sending to avoid exceptions
         {
             var guildId = Globals.serverPlayersMap.First(x => x.Value == dp).Key;
             var color = Program.GetBot().GetGuild(guildId).GetUser(Program.GetBot().CurrentUser.Id).Roles.OrderByDescending(x => x.Position).FirstOrDefault().Color;

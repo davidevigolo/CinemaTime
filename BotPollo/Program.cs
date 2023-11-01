@@ -125,15 +125,15 @@ namespace BotPollo
             
             webAppRef.UseCors(builder =>
             {
-                builder.WithOrigins("http://127.0.0.1:5500")
+                builder.WithOrigins("http://127.0.0.1:5001", "http://127.0.0.1:5173", "https://davidevps3.ddns.net")
                        .AllowAnyMethod()
                        .AllowAnyHeader()
                        .AllowCredentials();
             });
-            //webAppRef.UseAuthentication();
-            //webAppRef.UseAuthorization();
-            //webAppRef.UseHttpsRedirection();
-            webAppRef.Urls.Add("http://localhost:5000/");
+            webAppRef.UseAuthentication();
+            webAppRef.UseAuthorization();
+            webAppRef.UseHttpsRedirection();
+            webAppRef.Urls.Add("http://localhost:5002/");
             webAppRef.MapHub<PlayerHub>("/signalr");
             var svc = Globals.app.Services.GetService<IDiscordBotService>();
 

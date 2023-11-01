@@ -1,5 +1,6 @@
 ﻿using BotPollo.Attributes;
 using BotPollo.Core;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
 namespace BotPollo.SignalR
@@ -23,6 +24,7 @@ namespace BotPollo.SignalR
      * 
      * 
      */
+    [Authorize]
     public class PlayerHub : Hub
     {
         struct UserConnectionState{
@@ -34,8 +36,22 @@ namespace BotPollo.SignalR
         private List<UserConnectionState> _states = new List<UserConnectionState>();
         public override async Task OnConnectedAsync()
         {
-            await Clients.All.SendAsync("ReceiveMessage", $"{Context.ConnectionId} has joined");
-            await Groups.AddToGroupAsync($"{Context.ConnectionId}", "208664475623096321");
+            try
+            {
+                ulong userId = UInt64.Parse(Context.User.Claims.First(x => x.Type == "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier").Value);
+                ulong playerId = (await Globals.GetUserActivePlayer(userId))[0];
+                IDiscordPlayer player = Globals.serverPlayersMap[playerId];
+                await Clients.All.SendAsync("ReceiveMessage", $"{Context.ConnectionId} has joined");
+                await Groups.AddToGroupAsync($"{Context.ConnectionId}", playerId.ToString());
+                await Clients.Client(Context.ConnectionId).SendAsync("PlayerUpdate", player.GetPlayerStatus());
+            }catch (IndexOutOfRangeException)
+            {
+                await Clients.Client(Context.ConnectionId).SendAsync("ActivePlayer",null);
+            }
+            catch (Exception ex)
+            {
+                await Clients.Client(Context.ConnectionId).SendAsync($"{ex.Message}");
+            }
             /*var state = new UserConnectionState
             {
                 Id = 0,

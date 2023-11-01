@@ -1,7 +1,7 @@
 ﻿using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
-using BotPollo.Logging;
 using BotPollo.SignalR;
+using BotPollo.SignalR.Models;
 using Discord;
 using Discord.Audio;
 using DnsClient.Internal;
@@ -47,6 +47,7 @@ namespace BotPollo.Core
         bool HasChannelMessage();
         Task<bool> SeekAsync(TimeSpan timespan);
         Task<bool> SetSpeedAsync(double multiplier);
+        PlayerUpdate GetPlayerStatus();
         void Pause();
         void Resume();
         bool Skip();
@@ -679,21 +680,27 @@ namespace BotPollo.Core
             await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("PlayerUpdate", GetPlayerStatus());
         }
 
-        private struct PlayerStatus
+        /*private struct PlayerStatus
         {
             public bool isPlaying;
             public TimeSpan position;
             public QueueObject currentSong;
-        }
+        }*/
 
-        private PlayerStatus GetPlayerStatus()
+        public PlayerUpdate GetPlayerStatus()
         {
-            return new PlayerStatus
-            {
-                isPlaying = this.isPlaying,
-                position = GetTime(),
-                currentSong = CurrentQueueObject
-            };
+            return new PlayerUpdate(
+                isPlaying,
+                CurrentQueueObject.VideoInfo.Url,
+                CurrentQueueObject.VideoInfo.Id,
+                CurrentQueueObject.VideoInfo.Title,
+                CurrentQueueObject.VideoInfo.Author,
+                CurrentQueueObject.StreamInfo.Container,
+                CurrentQueueObject.StreamInfo.Bitrate,
+                CurrentQueueObject.VideoInfo.Duration,
+                GetTime(),
+                CurrentQueueObject.VideoInfo.Thumbnails
+                );
         }
 
         private async Task PlayerUpdate()
