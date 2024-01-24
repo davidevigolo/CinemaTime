@@ -16,6 +16,7 @@ using Newtonsoft.Json;
 using Serilog;
 using SpotifyAPI.Web;
 using System.Diagnostics;
+using Swan.Logging;
 
 namespace BotPollo
 {
@@ -45,14 +46,13 @@ namespace BotPollo
                 .CreateLogger();
 
             Log.Logger.Information("Application starting");
+            Log.Logger.Information(Directory.GetCurrentDirectory());
 
             var builder = WebApplication.CreateBuilder();
             //BuildConfig(builder.Configuration);
-
-            var teee = Directory.GetCurrentDirectory();
+            
             builder.Configuration.SetBasePath(Directory.GetCurrentDirectory());
-            builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
-            var jwtSetting = builder.Configuration["Jwt:Issuer"];
+            builder.Configuration.AddJsonFile("appsettings-dev.json", optional: false, reloadOnChange: true);
             //builder.WebHost.UseKestrel();
 
             builder.Services.AddSingleton<IDiscordBotService, DiscordBotService>();
@@ -125,7 +125,7 @@ namespace BotPollo
             
             webAppRef.UseCors(builder =>
             {
-                builder.WithOrigins("http://127.0.0.1:5001", "http://127.0.0.1:5173", "https://davidevps3.ddns.net")
+                builder.WithOrigins("http://127.0.0.1:5001", "http://127.0.0.1:5173", "http://davidevps.ddns.net")
                        .AllowAnyMethod()
                        .AllowAnyHeader()
                        .AllowCredentials();
@@ -147,8 +147,8 @@ namespace BotPollo
         static void BuildConfig(IConfigurationBuilder configurationBuilder)
         {
             configurationBuilder.SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true)
+                .AddJsonFile("/appsettings-dev.json", optional: false, reloadOnChange: true)
+                //.AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true)
                 .AddEnvironmentVariables()
                 .Build();
         }

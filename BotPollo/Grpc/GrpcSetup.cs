@@ -35,7 +35,7 @@ namespace BotPolloG.Grpc
                 app.Urls.Add("http://localhost:7042/");
                 app.Run();
             });
-            grpcThread.Start();
+            //grpcThread.Start();
         }
     }
 }

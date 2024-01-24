@@ -5,7 +5,8 @@
     <Nullable>enable</Nullable>
     <StartupObject>BotPollo.Program</StartupObject>
     <ImplicitUsings>enable</ImplicitUsings>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net7.0</TargetFramework>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,7 +26,6 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson" Version="7.0.11" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Opus" Version="1.0.0" />
     <PackageReference Include="RestSharp" Version="110.2.1-alpha.0.13" />
     <PackageReference Include="Serilog" Version="3.0.2-dev-02044" />
     <PackageReference Include="Serilog.Enrichers.Context" Version="4.6.5" />
@@ -46,9 +46,20 @@
   <ItemGroup>
     <ProjectReference Include="..\MongoWrapper\MongoWrapper.csproj" />
   </ItemGroup>
+  
+  <ItemGroup>
+    <None Include="./appsettings-dev.json" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always"/>
+    <None Include="./token.txt" CopyToPublishDirectory="Always" CopyToOutputDirectory="Always"/>
+  </ItemGroup>
 
   <ItemGroup>
     <Protobuf Include="Grpc\Protos\status.proto" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\.dockerignore">
+      <Link>.dockerignore</Link>
+    </Content>
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">

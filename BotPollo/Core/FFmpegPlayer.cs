@@ -1,6 +1,7 @@
 ﻿using BotPollo.Logging;
 using System.Diagnostics;
 using System.Numerics;
+using Serilog;
 using YoutubeExplode.Videos.Streams;
 using Exception = System.Exception;
 using TimeSpan = System.TimeSpan;
@@ -69,7 +70,7 @@ namespace BotPollo.Core
             MemoryStream ms2 = new MemoryStream();
 
             int bitrateParam = channelBitrate > 256000 ? 256000 : channelBitrate;
-            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.FileName = @"ffmpeg";
             proc.StartInfo.Arguments = String.Format($" -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000 -b:a {bitrateParam} pipe:1"); //-ab {channelBitrate}
                                                                                                                                          //proc.StartInfo.Arguments = String.Format($"-i pipe:0 -c:a libopus -f opus -thread_queue_size 4096 -b:a {channelBitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
@@ -106,6 +107,7 @@ namespace BotPollo.Core
             CurrentStreamPlaying = ms2;
 
             PlaybackStarted();
+            Log.Logger.Information("Buffering stream...");
             int bufferSize = 1500;
             byte[] bytes = new byte[bufferSize];
 
@@ -161,7 +163,7 @@ namespace BotPollo.Core
             StreamBitrate = bitrate;
             Process proc = new Process();
 
-            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.FileName = @"ffmpeg";
             proc.StartInfo.Arguments = String.Format($"-ss {offset.TotalSeconds} -i pipe:0 -ac 2 -f s16le -ar 48000 -b:a {bitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
             proc.StartInfo.RedirectStandardInput = true;
@@ -214,7 +216,7 @@ namespace BotPollo.Core
             StreamBitrate = bitrate;
             Process proc = new Process();
 
-            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.FileName = @"ffmpeg";
             proc.StartInfo.Arguments = String.Format($" -ss {Math.Floor(currentTime.TotalSeconds)} -i pipe:0 -af asetrate=48000*{factor},aresample=48000,atempo=1/{factor} -ac 2 -f s16le -ar 48000 -b:a {bitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
             proc.StartInfo.RedirectStandardInput = true;
@@ -265,7 +267,7 @@ namespace BotPollo.Core
             StreamBitrate = bitrate;
             Process proc = new Process();
 
-            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.FileName = @"ffmpeg";
             proc.StartInfo.Arguments = String.Format($"-hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -af \"atempo={factor.ToString().Replace(',','.')}\" -ar 48000 -b:a {bitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
             proc.StartInfo.RedirectStandardInput = true;
@@ -292,7 +294,7 @@ namespace BotPollo.Core
             StreamBitrate = bitrate;
             Process proc = new Process();
 
-            proc.StartInfo.FileName = @"C:\Users\david\Documents\ffmpeg\bin\ffmpeg.exe";
+            proc.StartInfo.FileName = @"ffmpeg";
             proc.StartInfo.Arguments = String.Format($"-hide_banner -loglevel panic -ss {Math.Floor(currentTime.TotalSeconds)} -i pipe:0 -ac 2 -f s16le {eqParamsString} -ar 48000 -b:a {bitrate} pipe:1");
             proc.StartInfo.UseShellExecute = false;
             proc.StartInfo.RedirectStandardInput = true;
