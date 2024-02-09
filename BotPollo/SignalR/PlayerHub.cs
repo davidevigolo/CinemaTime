@@ -1,5 +1,6 @@
 ﻿using BotPollo.Attributes;
 using BotPollo.Core;
+using Discord;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
@@ -27,26 +28,33 @@ namespace BotPollo.SignalR
     [Authorize]
     public class PlayerHub : Hub
     {
-        struct UserConnectionState{
-            public ulong Id;
-            public string Token;
+        public struct UserConnectionState{
+            public string ConnectionId;
             public string? GroupName;
-            public bool HasSubscribed; //Avoid connections that don't actually make use of the apis
         }
-        private List<UserConnectionState> _states = new List<UserConnectionState>();
+        public static Dictionary<ulong,UserConnectionState> _states = new();
         public override async Task OnConnectedAsync()
         {
+            UserConnectionState userState = new UserConnectionState()
+            {
+                ConnectionId = Context.ConnectionId
+            };
             try
             {
                 ulong userId = UInt64.Parse(Context.User.Claims.First(x => x.Type == "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier").Value);
+                if (!_states.TryAdd(userId, userState))
+                    _states[userId] = userState;
                 ulong playerId = (await Globals.GetUserActivePlayer(userId))[0];
                 IDiscordPlayer player = Globals.serverPlayersMap[playerId];
                 await Clients.All.SendAsync("ReceiveMessage", $"{Context.ConnectionId} has joined");
                 await Groups.AddToGroupAsync($"{Context.ConnectionId}", playerId.ToString());
                 await Clients.Client(Context.ConnectionId).SendAsync("PlayerUpdate", player.GetPlayerStatus());
+                userState.GroupName = playerId.ToString();
+
             }catch (IndexOutOfRangeException)
             {
                 await Clients.Client(Context.ConnectionId).SendAsync("ActivePlayer",null);
+                userState.GroupName = null;
             }
             catch (Exception ex)
             {

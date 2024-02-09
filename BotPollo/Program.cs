@@ -69,6 +69,8 @@ namespace BotPollo
             {
                 options.RequireHttpsMetadata = false;
                 options.SaveToken = true;
+                Log.Logger.Information(builder.Configuration["Jwt:Key"]);
+                Log.Logger.Information(builder.Configuration["Jwt:Audience"]);
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
@@ -125,7 +127,7 @@ namespace BotPollo
             
             webAppRef.UseCors(builder =>
             {
-                builder.WithOrigins("http://127.0.0.1:5001", "http://127.0.0.1:5173", "http://davidevps.ddns.net")
+                builder.WithOrigins("http://127.0.0.1:5001", "http://127.0.0.1:5173", "https://davidevps.ddns.net")
                        .AllowAnyMethod()
                        .AllowAnyHeader()
                        .AllowCredentials();

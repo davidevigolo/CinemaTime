@@ -5,6 +5,9 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Reflection;
+using BotPollo.SignalR;
+using Microsoft.AspNetCore.SignalR;
+using Serilog.Core;
 
 namespace BotPollo.Attributes
 {
@@ -12,10 +15,13 @@ namespace BotPollo.Attributes
     {
         private readonly ILogger<CommandManager> _logger;
         private Dictionary<string, MethodInfo> commandMap = new Dictionary<string, MethodInfo>();
-
-        public CommandManager(ILogger<CommandManager> logger)
+        private static IHubContext<PlayerHub> _hubContext;
+        public delegate void UserVoiceChannelUpdate(ulong uuid, IVoiceState newState, IVoiceState oldstate);
+        public static event UserVoiceChannelUpdate UserVoiceUpdate;
+        public CommandManager(ILogger<CommandManager> logger, IHubContext<PlayerHub> context)
         {
             _logger = logger;
+            _hubContext = context;
         }
 
         public void RegisterCommands<T>()
@@ -65,38 +71,36 @@ namespace BotPollo.Attributes
             _logger.LogInformation($"Setup finished in {sw.ElapsedMilliseconds}ms");
         }
 
-        public static async Task UserJoinedVChannelHandlerAsync(SocketUser user, SocketVoiceState state, SocketVoiceState state2)
+        public static async Task UserJoinedVChannelHandlerAsync(SocketUser user, SocketVoiceState state,
+            SocketVoiceState state2)
         {
-            if (state.VoiceChannel == state2.VoiceChannel || !Program.EnableNotifications) return;
-            //if(user.Username == "")
-            /*NotifyIcon notify = new NotifyIcon();
-            notify.Icon = System.Drawing.SystemIcons.Shield;
-            notify.BalloonTipTitle = "Title";
-            notify.BalloonTipText = "Text";
-            notify.BalloonTipIcon = ToolTipIcon.Info;
-            if (state.VoiceChannel == null)
+            //if (state.VoiceChannel == state2.VoiceChannel || !Program.EnableNotifications) return;
+            if (user.Id == Program.GetBot().CurrentUser.Id) return;
+            Console.WriteLine("Event sent");
+            ulong uuid = user.Id;
+            if (uuid == Program.GetBot().CurrentUser.Id) return;
+            try
             {
-                Logger.Console_Log($"User {user.Username} joined {state2.VoiceChannel}", LogLevel.Info);
-                notify.BalloonTipTitle = $"{user.Username}";
-                notify.BalloonTipText = $"joined {state2.VoiceChannel}";
+                string connectionId = PlayerHub._states[uuid].ConnectionId;
+                ulong playerId = (await Globals.GetUserActivePlayer(uuid))[0];
+                IDiscordPlayer player = Globals.serverPlayersMap[playerId];
+                if (state.VoiceChannel != null)
+                {
+                    _hubContext.Groups.RemoveFromGroupAsync($"{connectionId}", state.VoiceChannel.Guild.Id.ToString());
+                }
 
-            }else if (state2.VoiceChannel == null)
-            {
-                Logger.Console_Log($"User {user.Username} left {state.VoiceChannel}", LogLevel.Info);
-                notify.BalloonTipTitle = $"{user.Username}";
-                notify.BalloonTipText = $"left {state.VoiceChannel}";
-                notify.BalloonTipIcon = ToolTipIcon.Error;
+                if (state2.VoiceChannel != null)
+                {
+                    Console.WriteLine($"Event received, adding user {connectionId} to group {playerId.ToString()}");
+                    await _hubContext.Groups.AddToGroupAsync($"{connectionId}", playerId.ToString());
+                    await _hubContext.Clients.Client(connectionId).SendAsync("PlayerUpdate", player.GetPlayerStatus());
+                }
             }
-            else
+            catch (Exception ex)
             {
-                Logger.Console_Log($"User {user.Username} moved from {state.VoiceChannel} to {state2.VoiceChannel}", LogLevel.Info);
-                notify.BalloonTipTitle = $"{user.Username} moved to";
-                notify.BalloonTipText = $"{state2.VoiceChannel}";
-                notify.BalloonTipIcon = ToolTipIcon.Warning;
+                Console.WriteLine(ex.Message);
+                return;
             }
-            notify.Visible = true;
-            notify.ShowBalloonTip(500);*/
-
         }
 
         public async Task CommandHandler(SocketMessage msg)

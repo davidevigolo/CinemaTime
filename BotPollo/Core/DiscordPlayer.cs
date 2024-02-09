@@ -705,7 +705,6 @@ namespace BotPollo.Core
 
         private async Task PlayerUpdate()
         {
-            var temp = GetPlayerStatus();
             await hubContext.Clients.Group(AudioChannel.GuildId.ToString()).SendAsync("PlayerUpdate", GetPlayerStatus());
         }
 

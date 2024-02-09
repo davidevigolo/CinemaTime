@@ -6,8 +6,8 @@ RUN apt-get update
 RUN apt-get install -y libopus-dev
 RUN apt-get install -y ffmpeg
 
-FROM pre-build
-
+FROM debian AS build
+COPY --from=pre-build . .
 ARG BUILD_CONFIGURATION=Build
 WORKDIR /src
 COPY ["BotPollo/BotPollo.csproj", "BotPollo/"]
